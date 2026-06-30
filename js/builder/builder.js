@@ -34,6 +34,10 @@ export async function openBuilder(templateRow, cardRow) {
   engine.emptyDrag = "pan"; // builder: drag empty space to pan, no marquee/select
 
   buildFromTemplate(engine, data, { interactive: false });
+  // locked layers (frame image, shapes, text) must not intercept pointer events,
+  // or a frame drawn above the art slot blocks dragging the art to re-crop it.
+  // Only the fillable slot images (added by applyFieldValues below) stay interactive.
+  engine.contentNodes().forEach((n) => n.listening(false));
   const fieldValues = structuredClone(cardRow?.field_values || {});
   await applyFieldValues(engine, fieldValues);
   engine.setRotation(fieldValues.__rotation || 0);
