@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CARD FORGE — card proxy sandbox</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='3' fill='%236d8bff'/></svg>" />
+  <link rel="stylesheet" href="css/styles.css" />
+  <!-- CDN libraries (no build step) -->
+  <script src="https://cdn.jsdelivr.net/npm/konva@9/konva.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+  <!-- Demo-mode banner -->
+  <div id="demo-banner" class="banner hidden">
+    Local demo mode — data is saved only in this browser.
+    <a href="SUPABASE_SETUP.md" target="_blank">Enable cloud sync</a>
+  </div>
+
+  <!-- ===================== AUTH SCREEN ===================== -->
+  <section id="view-auth" class="view auth-view">
+    <div class="auth-card">
+      <h1 class="brand">CARD <span>FORGE</span></h1>
+      <p class="tagline">Design card templates. Build proxies. Print them.</p>
+      <form id="auth-form">
+        <input id="auth-email" type="email" placeholder="email" autocomplete="username" required />
+        <input id="auth-password" type="password" placeholder="password" autocomplete="current-password" required />
+        <div id="auth-error" class="auth-error"></div>
+        <button id="auth-submit" type="submit" class="btn btn-primary">Sign in</button>
+        <button id="auth-toggle" type="button" class="btn-link">Need an account? Sign up</button>
+      </form>
+    </div>
+  </section>
+
+  <!-- ===================== GAMES HOME ===================== -->
+  <section id="view-games" class="view hidden">
+    <header class="topbar">
+      <h1 class="brand small">CARD <span>FORGE</span></h1>
+      <div class="spacer"></div>
+      <button id="new-game-btn" class="btn btn-primary">+ New Game</button>
+      <span id="user-email" class="user-email"></span>
+      <button id="logout-btn" class="btn btn-ghost">Log out</button>
+    </header>
+    <div class="library-body">
+      <div class="library-section">
+        <h2>Your Games</h2>
+        <div id="games-grid" class="card-grid"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== GAME WORKSPACE ===================== -->
+  <section id="view-game" class="view hidden">
+    <header class="topbar">
+      <button class="btn btn-ghost" data-nav="games">← Games</button>
+      <h2 id="game-title" class="game-title"></h2>
+      <div class="spacer"></div>
+      <button id="game-print-job" class="btn btn-ghost">🖨 Print Job</button>
+      <button id="game-import-template" class="btn btn-ghost">Import</button>
+      <button id="game-new-template" class="btn btn-primary">+ New Template</button>
+    </header>
+    <div class="game-body">
+      <aside class="folders-pane">
+        <div class="folders-head">
+          <span>Folders</span>
+          <button id="new-folder-btn" class="btn btn-ghost" title="New folder">＋</button>
+        </div>
+        <ul id="folders-list" class="folders-list"></ul>
+      </aside>
+      <div class="game-main">
+        <div class="library-section">
+          <h2>Templates</h2>
+          <div id="g-templates-grid" class="card-grid"></div>
+        </div>
+        <div class="library-section">
+          <h2 id="cards-heading">Cards</h2>
+          <div id="g-cards-grid" class="card-grid"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== EDITOR ===================== -->
+  <section id="view-editor" class="view hidden">
+    <header class="topbar">
+      <button class="btn btn-ghost" data-nav="game">← Game</button>
+      <input id="editor-name" class="name-input" placeholder="Untitled template" />
+      <div class="spacer"></div>
+      <label class="size-preset">
+        Card size
+        <select id="size-preset">
+          <option value="750x1050">Poker 2.5×3.5"</option>
+          <option value="744x1039">Bridge 2.25×3.5"</option>
+          <option value="825x1425">Tarot 2.75×4.75"</option>
+          <option value="1050x1050">Square 3.5×3.5"</option>
+          <option value="custom">Custom…</option>
+        </select>
+      </label>
+      <label class="size-preset">
+        Orientation
+        <select id="orientation-preset">
+          <option value="portrait">Portrait</option>
+          <option value="landscape">Landscape</option>
+        </select>
+      </label>
+      <button id="editor-save" class="btn btn-primary">Save Template</button>
+    </header>
+    <div class="editor-body">
+      <aside id="editor-toolbar" class="toolbar"></aside>
+      <div id="editor-stage-wrap" class="stage-wrap">
+        <div id="editor-stage" class="stage-host"></div>
+        <div class="zoom-controls">
+          <button data-zoom="out">−</button>
+          <span id="zoom-label">100%</span>
+          <button data-zoom="in">+</button>
+          <button data-zoom="fit">Fit</button>
+        </div>
+      </div>
+      <aside id="editor-properties" class="properties"></aside>
+    </div>
+  </section>
+
+  <!-- ===================== BUILDER ===================== -->
+  <section id="view-builder" class="view hidden">
+    <header class="topbar">
+      <button class="btn btn-ghost" data-nav="game">← Game</button>
+      <input id="builder-name" class="name-input" placeholder="Untitled card" />
+      <span id="builder-template-name" class="muted"></span>
+      <div class="spacer"></div>
+      <button id="builder-rotate" class="btn btn-ghost" title="Rotate the card 90°">⟳ Rotate</button>
+      <button id="builder-export-png" class="btn btn-ghost">Export PNG</button>
+      <button id="builder-export-pdf" class="btn btn-ghost">Export PDF…</button>
+      <button id="builder-save" class="btn btn-primary">Save Card</button>
+    </header>
+    <div class="editor-body">
+      <div id="builder-stage-wrap" class="stage-wrap">
+        <div id="builder-stage" class="stage-host"></div>
+        <div class="zoom-controls">
+          <button data-zoom="out">−</button>
+          <span id="builder-zoom-label">100%</span>
+          <button data-zoom="in">+</button>
+          <button data-zoom="fit">Fit</button>
+        </div>
+      </div>
+      <aside id="builder-fields" class="properties wide"></aside>
+    </div>
+  </section>
+
+  <!-- Generic modal host -->
+  <div id="modal-root"></div>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
