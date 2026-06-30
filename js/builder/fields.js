@@ -130,12 +130,27 @@ export class FieldsPanel {
     block.appendChild(drop);
 
     const sliderRow = row("Zoom");
+    const cur = this.fieldValues[f.fieldName]?.scale || 1;
     const slider = document.createElement("input");
     slider.type = "range"; slider.min = "1"; slider.max = "5"; slider.step = "0.02";
-    slider.value = String(this.fieldValues[f.fieldName]?.scale || 1);
+    slider.value = String(cur);
     slider.disabled = !has;
-    slider.addEventListener("input", () => this._setScale(f, parseFloat(slider.value)));
-    sliderRow.appendChild(slider);
+    const num = document.createElement("input");
+    num.type = "number"; num.min = "1"; num.max = "10"; num.step = "0.05";
+    num.value = (+cur).toFixed(2); num.disabled = !has;
+    num.style.cssText = "width:58px;flex:0 0 auto";
+    const apply = (v, fromNum) => {
+      v = Math.max(1, Math.min(fromNum ? 10 : 5, isNaN(v) ? 1 : v));
+      slider.value = String(Math.min(5, v));      // bar caps at 5
+      num.value = v.toFixed(2);
+      this._setScale(f, v);
+    };
+    slider.addEventListener("input", () => apply(parseFloat(slider.value), false));
+    num.addEventListener("input", () => apply(parseFloat(num.value), true));
+    const wrap = document.createElement("div");
+    wrap.style.cssText = "display:flex;gap:8px;align-items:center;flex:1";
+    wrap.append(slider, num);
+    sliderRow.appendChild(wrap);
     block.appendChild(sliderRow);
 
     if (has) {
