@@ -4,6 +4,7 @@
 // branches on which backend is active.
 
 import { SUPABASE_URL, SUPABASE_ANON_KEY, CLOUD_ENABLED } from "../config.js";
+import { idbGet, idbSet } from "./idb.js";
 
 export const CLOUD = CLOUD_ENABLED;
 
@@ -83,7 +84,7 @@ export async function listGames() {
     if (error) throw error;
     return data;
   }
-  return localList("cf_games");
+  return idbList("cf_games");
 }
 
 export async function saveGame(game) { return saveRow("games", "cf_games", game); }
@@ -95,10 +96,10 @@ export async function deleteGame(id) {
     return;
   }
   // demo: cascade manually
-  localStorage.setItem("cf_games", JSON.stringify(localList("cf_games").filter((g) => g.id !== id)));
-  localStorage.setItem("cf_folders", JSON.stringify(localList("cf_folders").filter((f) => f.game_id !== id)));
-  localStorage.setItem("cf_templates", JSON.stringify(localList("cf_templates").filter((t) => t.game_id !== id)));
-  localStorage.setItem("cf_cards", JSON.stringify(localList("cf_cards").filter((c) => c.game_id !== id)));
+  await idbSet("cf_games", (await idbList("cf_games")).filter((g) => g.id !== id));
+  await idbSet("cf_folders", (await idbList("cf_folders")).filter((f) => f.game_id !== id));
+  await idbSet("cf_templates", (await idbList("cf_templates")).filter((t) => t.game_id !== id));
+  await idbSet("cf_cards", (await idbList("cf_cards")).filter((c) => c.game_id !== id));
 }
 
 export async function listFolders(gameId) {
@@ -107,7 +108,7 @@ export async function listFolders(gameId) {
     if (error) throw error;
     return data;
   }
-  return localList("cf_folders").filter((f) => f.game_id === gameId);
+  return (await idbList("cf_folders")).filter((f) => f.game_id === gameId);
 }
 
 export async function saveFolder(folder) { return saveRow("folders", "cf_folders", folder); }
@@ -120,28 +121,46 @@ export async function deleteFolder(id) {
     if (error) throw error;
     return;
   }
-  const cards = localList("cf_cards");
+  const cards = await idbList("cf_cards");
   cards.forEach((c) => { if (c.folder_id === id) c.folder_id = null; });
-  localStorage.setItem("cf_cards", JSON.stringify(cards));
-  localStorage.setItem("cf_folders", JSON.stringify(localList("cf_folders").filter((f) => f.id !== id)));
+  await idbSet("cf_cards", cards);
+  await idbSet("cf_folders", (await idbList("cf_folders")).filter((f) => f.id !== id));
+}
+
+// One-time: move any old localStorage data into IndexedDB, then free localStorage
+// (which is what was overflowing once cards embed image/thumbnail data).
+async function migrateFromLocalStorage() {
+  if (await idbGet("cf_migrated_v1")) return;
+  for (const key of ["cf_games", "cf_folders", "cf_templates", "cf_cards"]) {
+    const raw = localStorage.getItem(key);
+    if (raw) {
+      try {
+        const arr = JSON.parse(raw);
+        if (Array.isArray(arr) && arr.length && !(await idbList(key)).length) await idbSet(key, arr);
+      } catch {}
+      localStorage.removeItem(key); // reclaim the ~5MB localStorage budget
+    }
+  }
+  await idbSet("cf_migrated_v1", true);
 }
 
 // Move local templates/cards that predate the games feature into a default game.
 export async function ensureLocalMigration() {
   if (CLOUD) return;
-  const games = localList("cf_games");
-  const templates = localList("cf_templates");
-  const cards = localList("cf_cards");
+  await migrateFromLocalStorage();
+  const games = await idbList("cf_games");
+  const templates = await idbList("cf_templates");
+  const cards = await idbList("cf_cards");
   const orphans = templates.some((t) => !t.game_id) || cards.some((c) => !c.game_id);
   if (games.length === 0 && orphans) {
     const uid = await currentUserId();
     const now = new Date().toISOString();
     const game = { id: "loc-game-default", user_id: uid, name: "My Cards", created_at: now, updated_at: now };
-    localStorage.setItem("cf_games", JSON.stringify([game]));
+    await idbSet("cf_games", [game]);
     templates.forEach((t) => { if (!t.game_id) t.game_id = game.id; });
     cards.forEach((c) => { if (!c.game_id) c.game_id = game.id; });
-    localStorage.setItem("cf_templates", JSON.stringify(templates));
-    localStorage.setItem("cf_cards", JSON.stringify(cards));
+    await idbSet("cf_templates", templates);
+    await idbSet("cf_cards", cards);
   }
 }
 
@@ -157,7 +176,7 @@ export async function listTemplates(gameId) {
     if (error) throw error;
     return data;
   }
-  let all = localList("cf_templates");
+  let all = await idbList("cf_templates");
   if (gameId) all = all.filter((t) => t.game_id === gameId);
   return all;
 }
@@ -176,7 +195,7 @@ export async function getTemplate(id) {
     if (error) throw error;
     return data;
   }
-  return localList("cf_templates").find((t) => t.id === id) || null;
+  return (await idbList("cf_templates")).find((t) => t.id === id) || null;
 }
 
 export async function listCards(gameId) {
@@ -187,7 +206,7 @@ export async function listCards(gameId) {
     if (error) throw error;
     return data;
   }
-  let all = localList("cf_cards");
+  let all = await idbList("cf_cards");
   if (gameId) all = all.filter((c) => c.game_id === gameId);
   return all;
 }
@@ -218,10 +237,10 @@ async function saveRow(table, lsKey, row) {
     return res.data;
   }
 
-  // local
-  const all = localList(lsKey);
+  // local (IndexedDB)
+  const all = await idbList(lsKey);
   if (!payload.id) {
-    payload.id = "loc-" + Math.abs(hashStr(uid + now + JSON.stringify(row).slice(0, 40)));
+    payload.id = "loc-" + Math.abs(hashStr(uid + now + JSON.stringify(row).slice(0, 40))) + "-" + (all.length + 1);
     payload.created_at = now;
     all.unshift(payload);
   } else {
@@ -229,7 +248,7 @@ async function saveRow(table, lsKey, row) {
     if (i >= 0) all[i] = { ...all[i], ...payload };
     else all.unshift(payload);
   }
-  localStorage.setItem(lsKey, JSON.stringify(all));
+  await idbSet(lsKey, all);
   return payload;
 }
 
@@ -239,16 +258,12 @@ async function deleteRow(table, lsKey, id) {
     if (error) throw error;
     return;
   }
-  const all = localList(lsKey).filter((r) => r.id !== id);
-  localStorage.setItem(lsKey, JSON.stringify(all));
+  await idbSet(lsKey, (await idbList(lsKey)).filter((r) => r.id !== id));
 }
 
-function localList(key) {
-  try {
-    return JSON.parse(localStorage.getItem(key) || "[]");
-  } catch {
-    return [];
-  }
+async function idbList(key) {
+  const v = await idbGet(key);
+  return Array.isArray(v) ? v : [];
 }
 
 /* ============================================================
