@@ -6,6 +6,7 @@
 // (see applyFieldValues). This keeps template load synchronous and small.
 
 const Konva = window.Konva;
+import { RichText, createRichText, styleToRuns } from "./richtext.js";
 
 /* ---------- node factory ---------- */
 function dataToNode(desc) {
@@ -16,15 +17,9 @@ function dataToNode(desc) {
     case "Circle": return new Konva.Circle(a);
     case "Line": return new Konva.Line(a);
     case "Image": return new Konva.Image({ ...a, image: undefined }); // image loaded in buildFromTemplate
-    case "RichText": {
-      // legacy rich-text data -> a plain Text node (whole-node style)
-      const runs = a.runs || [];
-      const text = runs.map((r) => r.text || "").join("");
-      const fontStyle = [runs.some((r) => r.b) && "bold", runs.some((r) => r.i) && "italic"]
-        .filter(Boolean).join(" ") || "normal";
-      return new Konva.Text({ ...a, runs: undefined, text, fontStyle });
-    }
-    case "Text": return new Konva.Text(a);
+    case "RichText": return new RichText(a);
+    case "Text": // legacy single-style text -> a one-run RichText
+      return createRichText({ ...a, text: undefined, fontStyle: undefined, runs: styleToRuns(a.text || "", a.fontStyle) });
     default: return Konva.Node.create(JSON.stringify(desc));
   }
 }
@@ -103,19 +98,14 @@ export async function applyFieldValues(engineLike, fieldValues = {}) {
 
     if (role === "textField") {
       if (val && val.type === "text") {
-        if (val.value != null) node.text(val.value);
-        else if (val.runs) node.text(val.runs.map((r) => r.text || "").join("")); // legacy
+        if (val.runs && val.runs.length) node.runs(val.runs);
+        else if (val.value != null) node.runs(styleToRuns(val.value, val.fontStyle));
         if (val.fontSize) node.fontSize(val.fontSize);
         if (val.fontFamily) node.fontFamily(val.fontFamily);
-        if (val.fontStyle) node.fontStyle(val.fontStyle);
-        else if (val.runs) {
-          node.fontStyle([val.runs.some((r) => r.b) && "bold", val.runs.some((r) => r.i) && "italic"]
-            .filter(Boolean).join(" ") || "normal");
-        }
         if (val.fill) node.fill(val.fill);
         if (val.align) node.align(val.align);
         if (val.verticalAlign) node.verticalAlign(val.verticalAlign);
-      } else if (typeof val === "string") node.text(val);
+      } else if (typeof val === "string") node.runs(styleToRuns(val));
     } else if (role === "imageSlot" && val && val.url) {
       jobs.push(addImageToSlot(engineLike, node, val).then((g) => imageGroups.push(g)));
     }

@@ -4,7 +4,8 @@
 
 import { uploadImage } from "../supabase.js";
 import { applyFieldValues, clampImageToSlot } from "../editor/serialize.js";
-import { createFontCombo, createBoldItalic, createSegmented } from "../ui/text-controls.js";
+import { createFontCombo, createSegmented } from "../ui/text-controls.js";
+import { runsToHtml, htmlToRuns, styleToRuns } from "../editor/richtext.js";
 
 export class FieldsPanel {
   constructor(hostEl, engine, fieldValues, fields) {
@@ -50,15 +51,26 @@ export class FieldsPanel {
     const block = el("div", "field-block");
     block.appendChild(el("div", "field-role", "text · " + f.fieldName));
 
+    // rich editable text box (⌘B / ⌘I / ⌘U on a selection) — editing stays in the panel
     const cur = this.fieldValues[f.fieldName] || {};
-    const ta = document.createElement("textarea");
-    ta.placeholder = "Enter " + f.fieldName + "…";
-    ta.value = cur.type === "text"
-      ? (cur.value != null ? cur.value : (cur.runs ? cur.runs.map((r) => r.text || "").join("") : ""))
-      : "";
-    ta.style.cssText = "width:100%;min-height:54px";
-    ta.addEventListener("input", () => { this._patchText(f, { value: ta.value }); f.node.text(ta.value); this.engine.layer.batchDraw(); });
-    block.appendChild(ta);
+    const startRuns = cur.type === "text" && cur.runs ? cur.runs
+      : cur.type === "text" && cur.value != null ? styleToRuns(cur.value, cur.fontStyle)
+      : (f.node.runs && f.node.runs()) || [];
+    const ed = document.createElement("div");
+    ed.className = "rich-input";
+    ed.contentEditable = "true";
+    ed.setAttribute("data-ph", "Enter " + f.fieldName + "…");
+    ed.innerHTML = runsToHtml(startRuns);
+    const syncFromEditor = () => {
+      const runs = htmlToRuns(ed);
+      this._patchText(f, { runs, value: undefined });
+      f.node.runs(runs);
+      this.engine.layer.batchDraw();
+    };
+    ed.addEventListener("input", syncFromEditor);
+    ed.addEventListener("blur", syncFromEditor);
+    block.appendChild(ed);
+    block.appendChild(el("div", "field-role", "select text, then ⌘/Ctrl + B / I / U"));
 
     const sizeRow = row("Font size");
     const sizeInput = document.createElement("input");
@@ -76,12 +88,6 @@ export class FieldsPanel {
       if (!v) return; this._patchText(f, { fontFamily: v }); f.node.fontFamily(v); this.engine.layer.batchDraw();
     }));
     block.appendChild(fontRow);
-
-    const styleRow = row("Style");
-    styleRow.appendChild(createBoldItalic(f.node.fontStyle() || "normal", (s) => {
-      this._patchText(f, { fontStyle: s }); f.node.fontStyle(s); this.engine.layer.batchDraw();
-    }));
-    block.appendChild(styleRow);
 
     const alignRow = row("Align");
     alignRow.appendChild(createSegmented(

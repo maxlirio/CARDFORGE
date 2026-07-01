@@ -2,6 +2,7 @@
 // Shapes AND text are drag-to-draw boxes; a plain click drops a default-sized one.
 
 const Konva = window.Konva;
+import { createRichText, makeRuns } from "./richtext.js";
 
 const DRAW_TOOLS = new Set(["rect", "ellipse", "line", "imageSlot", "textField", "staticText"]);
 const TEXT_TOOLS = new Set(["textField", "staticText"]);
@@ -58,7 +59,7 @@ export class ToolManager {
     node.on("dragend", () => { this._dragBase = null; this.onChange(); });
 
     // text: live reflow while resizing the box (keep font size constant)
-    if (node.className === "Text") {
+    if (node.className === "RichText" || node.className === "Text") {
       node.on("transform", () => {
         node.width(Math.max(10, node.width() * node.scaleX()));
         node.height(Math.max(10, node.height() * node.scaleY()));
@@ -205,11 +206,10 @@ export class ToolManager {
     // default box if the user just clicked
     const width = w < 12 ? Math.min(360, this.engine.width - x - 20) : w;
     const height = h < 12 ? 90 : h;
-    const node = new Konva.Text({
+    const node = createRichText({
       x, y, width, height,
-      text: isField ? `{${fieldName || "field"}}` : "Label",
-      fontSize: 42, fontFamily: "system-ui, sans-serif", fill: "#111111",
-      align: "left", verticalAlign: "top", wrap: "word", lineHeight: 1.1,
+      runs: makeRuns(isField ? `{${fieldName || "field"}}` : "Label"),
+      align: "left", verticalAlign: "top",
     });
     node.setAttr("role", isField ? "textField" : "staticText");
     if (isField) node.setAttr("fieldName", fieldName || "field");

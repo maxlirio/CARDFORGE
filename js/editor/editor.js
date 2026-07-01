@@ -213,6 +213,7 @@ function normalizeNode(node) {
       node.radiusY(node.radiusY() * sy);
       break;
     case "Text":
+    case "RichText":
       // resize the BOX and reflow — never scale the font from the transformer
       node.width(Math.max(10, node.width() * sx));
       node.height(Math.max(10, (node.height() || node.fontSize()) * sy));

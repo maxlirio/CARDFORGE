@@ -35,21 +35,22 @@ export class PropertiesPanel {
       const g = group(role === "imageSlot" ? "Image slot" : "Text field");
       g.appendChild(this._textRow("Field name", node.getAttr("fieldName") || "", (v) => {
         node.setAttr("fieldName", v);
-        if (role === "textField" && cls === "Text") node.text(`{${v || "field"}}`);
+        if (role === "textField" && node.runs) node.runs([{ text: `{${v || "field"}}`, b: false, i: false, u: false }]);
         this._commit();
       }));
       if (role === "textField")
-        g.appendChild(el("div", "field-role", "Font size, font, style & alignment below are DEFAULTS — each card can override them in the builder."));
+        g.appendChild(el("div", "field-role", "Font, size & alignment below are DEFAULTS — fill the text (with ⌘B/⌘I/⌘U for bold/italic/underline) per card in the builder."));
       h.appendChild(g);
     }
 
     const g = group("Appearance");
-    if (cls === "Text") {
-      g.appendChild(this._textareaRow("Text", node.text(), (v) => { node.text(v); this._commit(); }));
+    if (cls === "RichText" || cls === "Text") {
+      g.appendChild(this._textareaRow("Placeholder", node.getPlainText ? node.getPlainText() : node.text(), (v) => {
+        node.runs([{ text: v, b: false, i: false, u: false }]); this._commit();
+      }));
       // these set the DEFAULT for the field; each card can still override them in the builder
       g.appendChild(this._numberRow("Font size", node.fontSize(), 4, 400, (v) => { node.fontSize(v); this._commit(); }));
       g.appendChild(this._widgetRow("Font", createFontCombo(node.fontFamily(), (v) => { if (v) node.fontFamily(v); this._commit(); })));
-      g.appendChild(this._widgetRow("Style", createBoldItalic(node.fontStyle() || "normal", (s) => { node.fontStyle(s); this._commit(); })));
       g.appendChild(this._selectRow("Align", node.align() || "left", ["left", "center", "right"], (v) => { node.align(v); this._commit(); }));
       g.appendChild(this._selectRow("V-align", node.verticalAlign() || "top", ["top", "middle", "bottom"], (v) => { node.verticalAlign(v); this._commit(); }));
       g.appendChild(this._colorRow("Color", node.fill() || "#111111", (v) => { node.fill(v); this._commit(); }));
