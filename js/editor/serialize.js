@@ -105,6 +105,7 @@ export async function applyFieldValues(engineLike, fieldValues = {}) {
         if (val.fill) node.fill(val.fill);
         if (val.align) node.align(val.align);
         if (val.verticalAlign) node.verticalAlign(val.verticalAlign);
+        if (val.boldness != null) node.boldness(val.boldness);
       } else if (typeof val === "string") node.runs(styleToRuns(val));
     } else if (role === "imageSlot" && val && val.url) {
       jobs.push(addImageToSlot(engineLike, node, val).then((g) => imageGroups.push(g)));

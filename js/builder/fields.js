@@ -105,6 +105,17 @@ export class FieldsPanel {
     ));
     block.appendChild(vAlignRow);
 
+    const boldRow = row("Boldness");
+    const bold = document.createElement("input");
+    bold.type = "range"; bold.min = "0"; bold.max = "100"; bold.step = "5";
+    bold.value = String(f.node.boldness ? f.node.boldness() : 0);
+    bold.addEventListener("input", () => {
+      const v = parseFloat(bold.value) || 0;
+      this._patchText(f, { boldness: v }); f.node.boldness(v); this.engine.layer.batchDraw();
+    });
+    boldRow.appendChild(bold);
+    block.appendChild(boldRow);
+
     const colorRow = row("Color");
     const color = document.createElement("input");
     color.type = "color"; color.value = normHex(f.node.fill());

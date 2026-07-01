@@ -53,6 +53,7 @@ export class PropertiesPanel {
       g.appendChild(this._widgetRow("Font", createFontCombo(node.fontFamily(), (v) => { if (v) node.fontFamily(v); this._commit(); })));
       g.appendChild(this._selectRow("Align", node.align() || "left", ["left", "center", "right"], (v) => { node.align(v); this._commit(); }));
       g.appendChild(this._selectRow("V-align", node.verticalAlign() || "top", ["top", "middle", "bottom"], (v) => { node.verticalAlign(v); this._commit(); }));
+      g.appendChild(this._numberRow("Boldness", node.boldness ? node.boldness() : 0, 0, 100, (v) => { node.boldness(v); this._commit(); }));
       g.appendChild(this._colorRow("Color", node.fill() || "#111111", (v) => { node.fill(v); this._commit(); }));
     } else if (cls === "Image") {
       // static template image (e.g. a frame): only opacity + arrange below

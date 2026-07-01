@@ -38,19 +38,29 @@ class RichText extends Konva.Shape {
     flush();
     const totalH = lines.length * lh;
     let y = valign === "middle" ? (boxH - totalH) / 2 : valign === "bottom" ? boxH - totalH : 0;
+    const boldW = (this.boldness() || 0) / 100 * fs * 0.06; // faux-bold stroke (any font)
     ctx.textBaseline = "alphabetic";
+    ctx.lineJoin = "round";
     for (const ln of lines) {
       let x = align === "center" ? (maxW - ln.w) / 2 : align === "right" ? maxW - ln.w : 0;
       const baseline = y + fs * 0.82;
+      // underline: one continuous line per contiguous underlined span (no gaps at spaces)
+      let ux = x, k = 0;
+      while (k < ln.tokens.length) {
+        if (ln.tokens[k].u) {
+          const startX = ux;
+          while (k < ln.tokens.length && ln.tokens[k].u) { ux += ln.tokens[k].w; k++; }
+          ctx.strokeStyle = fill; ctx.lineWidth = Math.max(1, fs * 0.055);
+          const uy = baseline + fs * 0.12;
+          ctx.beginPath(); ctx.moveTo(startX, uy); ctx.lineTo(ux, uy); ctx.stroke();
+        } else { ux += ln.tokens[k].w; k++; }
+      }
+      // then the glyphs
       for (const t of ln.tokens) {
         ctx.font = `${t.i ? "italic " : ""}${t.b ? "bold " : ""}${fs}px ${ff}`;
         ctx.fillStyle = fill;
         ctx.fillText(t.text, x, baseline);
-        if (t.u && t.text.trim() !== "") {
-          ctx.strokeStyle = fill; ctx.lineWidth = Math.max(1, fs * 0.06);
-          const uy = baseline + fs * 0.12;
-          ctx.beginPath(); ctx.moveTo(x, uy); ctx.lineTo(x + t.w, uy); ctx.stroke();
-        }
+        if (boldW > 0) { ctx.strokeStyle = fill; ctx.lineWidth = boldW; ctx.strokeText(t.text, x, baseline); }
         x += t.w;
       }
       y += lh;
@@ -71,7 +81,8 @@ function accessor(name, def) {
   };
 }
 accessor("runs", []); accessor("fontFamily", "system-ui, sans-serif"); accessor("fontSize", 42);
-accessor("fill", "#111111"); accessor("align", "left"); accessor("verticalAlign", "top"); accessor("lineHeight", 1.15);
+accessor("fill", "#111111"); accessor("align", "left"); accessor("verticalAlign", "top");
+accessor("lineHeight", 1.15); accessor("boldness", 0);
 
 export { RichText };
 export function makeRuns(text) { return [{ text: text || "", b: false, i: false, u: false }]; }
