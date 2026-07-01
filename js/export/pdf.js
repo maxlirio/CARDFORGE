@@ -232,12 +232,25 @@ function pickImageFile() {
   });
 }
 
+// effective card pixel dims (accounts for a builder rotation)
+function effDims(item) {
+  const rot = (((item.fieldValues && item.fieldValues.__rotation) || 0) % 180) !== 0;
+  return rot ? [item.height, item.width] : [item.width, item.height];
+}
+// fit (iw×ih) inside (cw×ch) preserving aspect, centered — never squishes
+function fitInto(iw, ih, cw, ch) {
+  const s = Math.min(cw / iw, ch / ih);
+  const dw = iw * s, dh = ih * s;
+  return { dx: (cw - dw) / 2, dy: (ch - dh) / 2, dw, dh };
+}
+
 async function arrangePrintJob(items, { paper, sizeMode, customWmm, customHmm, copies, margin, gap, crop, name }) {
   const { jsPDF } = window.jspdf;
   const sheet = PAPER[paper];
-  // uniform cell size (decks are same-size): custom, else first card's real size
-  const cellW = sizeMode === "custom" ? customWmm : (items[0].width / DPI) * MM_PER_IN;
-  const cellH = sizeMode === "custom" ? customHmm : (items[0].height / DPI) * MM_PER_IN;
+  // uniform cell: custom, else first card's real size (rotation-aware)
+  const [ew0, eh0] = effDims(items[0]);
+  const cellW = sizeMode === "custom" ? customWmm : (ew0 / DPI) * MM_PER_IN;
+  const cellH = sizeMode === "custom" ? customHmm : (eh0 / DPI) * MM_PER_IN;
 
   // render each unique card once
   const cache = new Map();
@@ -264,17 +277,23 @@ async function arrangePrintJob(items, { paper, sizeMode, customWmm, customHmm, c
     if (i > 0 && onPage === 0) doc.addPage();
     const col = onPage % cols, row = Math.floor(onPage / cols);
     const x = ox + col * (cellW + gap), y = oy + row * (cellH + gap);
-    doc.addImage(cache.get(seq[i]), "PNG", x, y, cellW, cellH);
-    if (crop) drawCropMarks(doc, x, y, cellW, cellH);
+    const [iw, ih] = effDims(seq[i]);
+    const f = fitInto(iw, ih, cellW, cellH);
+    doc.addImage(cache.get(seq[i]), "PNG", x + f.dx, y + f.dy, f.dw, f.dh);
+    if (crop) drawCropMarks(doc, x + f.dx, y + f.dy, f.dw, f.dh);
   }
   doc.save(safeName(name) + "_printjob.pdf");
 }
 
-// render a print item OR a raw image url to a PNG data URL
+// render a print item OR a raw image url -> { url, w, h } (effective pixel dims for fit)
 async function renderAny(x) {
   if (!x) return null;
-  if (typeof x === "string") return x; // already an image data url (uploaded back)
-  return renderCardDataURL({ width: x.width, height: x.height, data: x.data, fieldValues: x.fieldValues, pixelRatio: 1 });
+  if (typeof x === "string") {
+    const dims = await new Promise((res) => { const im = new Image(); im.onload = () => res([im.naturalWidth, im.naturalHeight]); im.onerror = () => res([1, 1]); im.src = x; });
+    return { url: x, w: dims[0], h: dims[1] };
+  }
+  const [w, h] = effDims(x);
+  return { url: await renderCardDataURL({ width: x.width, height: x.height, data: x.data, fieldValues: x.fieldValues, pixelRatio: 1 }), w, h };
 }
 
 // Double-sided: fronts on one page, backs on the next with a mirrored grid so a
@@ -282,8 +301,9 @@ async function renderAny(x) {
 async function arrangePrintJobDuplex(pairs, { paper, sizeMode, customWmm, customHmm, copies, margin, gap, crop, flipEdge, name }) {
   const { jsPDF } = window.jspdf;
   const sheet = PAPER[paper];
-  const cellW = sizeMode === "custom" ? customWmm : (pairs[0].front.width / DPI) * MM_PER_IN;
-  const cellH = sizeMode === "custom" ? customHmm : (pairs[0].front.height / DPI) * MM_PER_IN;
+  const [ew0, eh0] = effDims(pairs[0].front);
+  const cellW = sizeMode === "custom" ? customWmm : (ew0 / DPI) * MM_PER_IN;
+  const cellH = sizeMode === "custom" ? customHmm : (eh0 / DPI) * MM_PER_IN;
 
   const seq = [];
   for (const pr of pairs) for (let k = 0; k < copies; k++) seq.push(pr);
@@ -306,8 +326,8 @@ async function arrangePrintJobDuplex(pairs, { paper, sizeMode, customWmm, custom
       const x = ox + col * (cellW + gap), y = oy + row * (cellH + gap);
       let img = fCache.get(chunk[i].front);
       if (img === undefined) { img = await renderAny(chunk[i].front); fCache.set(chunk[i].front, img); }
-      if (img) doc.addImage(img, "PNG", x, y, cellW, cellH);
-      if (crop) drawCropMarks(doc, x, y, cellW, cellH);
+      if (img) { const f = fitInto(img.w, img.h, cellW, cellH); doc.addImage(img.url, "PNG", x + f.dx, y + f.dy, f.dw, f.dh); if (crop) drawCropMarks(doc, x + f.dx, y + f.dy, f.dw, f.dh); }
+      else if (crop) drawCropMarks(doc, x, y, cellW, cellH);
     }
     // BACK page (mirrored for duplex alignment)
     doc.addPage();
@@ -321,7 +341,7 @@ async function arrangePrintJobDuplex(pairs, { paper, sizeMode, customWmm, custom
       if (!back) continue;
       let img = bCache.get(back);
       if (img === undefined) { img = await renderAny(back); bCache.set(back, img); }
-      if (img) doc.addImage(img, "PNG", x, y, cellW, cellH);
+      if (img) { const f = fitInto(img.w, img.h, cellW, cellH); doc.addImage(img.url, "PNG", x + f.dx, y + f.dy, f.dw, f.dh); }
     }
   }
   doc.save(safeName(name) + "_duplex.pdf");
