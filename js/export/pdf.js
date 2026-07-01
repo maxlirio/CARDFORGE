@@ -4,6 +4,7 @@
 import { renderCardDataURL } from "../render.js";
 import { modal } from "../ui/modal.js";
 import { safeName } from "./png.js";
+import { fileToDataURL } from "../supabase.js";
 
 const DPI = 300;
 const MM_PER_IN = 25.4;
@@ -105,22 +106,23 @@ function drawCropMarks(doc, x, y, w, h) {
  * items: [{ name, width, height, data, fieldValues }]
  * Used for a single card, a folder, or a whole game.
  * ========================================================== */
-export async function printJobDialog(items, scopeLabel, fileName) {
-  if (!items || !items.length) { alert("No cards to print."); return; }
-  const first = items[0];
+// fronts + catalog are print-items: { id, name, thumb, width, height, data, fieldValues }
+// catalog = candidate backs (all the game's cards); uploads are appended to it.
+export async function printJobDialog(fronts, catalog, scopeLabel, fileName) {
+  if (!fronts || !fronts.length) { alert("No cards to print."); return; }
+  const first = fronts[0];
   const realW = (first.width / DPI) * MM_PER_IN;
   const realH = (first.height / DPI) * MM_PER_IN;
+  catalog = (catalog || []).slice();       // mutable (uploads pushed here)
+  const backSel = new Array(fronts.length).fill("none"); // per-front chosen back id
 
   const body = document.createElement("div");
   body.innerHTML = `
-    <div class="muted" style="margin-bottom:10px">${scopeLabel} · ${items.length} card${items.length > 1 ? "s" : ""}</div>
+    <div class="muted" style="margin-bottom:10px">${scopeLabel} · ${fronts.length} card${fronts.length > 1 ? "s" : ""}</div>
     <div class="prop-row"><label>Paper</label>
       <select id="pj-paper"><option value="letter">${PAPER.letter.label}</option><option value="a4">${PAPER.a4.label}</option></select></div>
     <div class="prop-row"><label>Card size</label>
-      <select id="pj-size">
-        <option value="real">Real card size (${realW.toFixed(1)}×${realH.toFixed(1)} mm)</option>
-        <option value="custom">Custom…</option>
-      </select></div>
+      <select id="pj-size"><option value="real">Real card size (${realW.toFixed(1)}×${realH.toFixed(1)} mm)</option><option value="custom">Custom…</option></select></div>
     <div class="prop-row" id="pj-custom-row" style="display:none"><label>Custom (mm)</label>
       <span style="display:flex;gap:6px"><input id="pj-cw" type="number" min="10" max="300" value="${realW.toFixed(1)}" style="width:60px"/>
       <input id="pj-ch" type="number" min="10" max="300" value="${realH.toFixed(1)}" style="width:60px"/></span></div>
@@ -128,10 +130,65 @@ export async function printJobDialog(items, scopeLabel, fileName) {
     <div class="prop-row"><label>Margin (mm)</label><input id="pj-margin" type="number" min="0" max="30" value="8"/></div>
     <div class="prop-row"><label>Gap (mm)</label><input id="pj-gap" type="number" min="0" max="20" value="2"/></div>
     <div class="prop-row"><label>Crop marks</label><input id="pj-crop" type="checkbox" checked/></div>
+    <div class="prop-row"><label>Double-sided</label><input id="pj-duplex" type="checkbox"/></div>
+    <div id="pj-backs" style="display:none">
+      <div class="prop-row"><label>Flip on</label>
+        <select id="pj-flip"><option value="long">Long edge</option><option value="short">Short edge</option></select></div>
+      <div class="prop-row"><label>Set all backs</label><select id="pj-setall"></select></div>
+      <div class="muted" style="margin:6px 0">Back for each card:</div>
+      <div id="pj-list" style="max-height:190px;overflow:auto;border:1px solid var(--line);border-radius:6px;padding:6px"></div>
+      <div class="muted" style="margin-top:6px;font-size:12px">Backs print mirrored so a duplex flip lands each back behind its card.</div>
+    </div>
   `;
   const sizeSel = body.querySelector("#pj-size");
-  const customRow = body.querySelector("#pj-custom-row");
-  sizeSel.addEventListener("change", () => { customRow.style.display = sizeSel.value === "custom" ? "" : "none"; });
+  body.querySelector("#pj-custom-row");
+  sizeSel.addEventListener("change", () => { body.querySelector("#pj-custom-row").style.display = sizeSel.value === "custom" ? "" : "none"; });
+
+  const listEl = body.querySelector("#pj-list");
+  const setAll = body.querySelector("#pj-setall");
+  const optionsHtml = () => `<option value="none">— none —</option>` +
+    catalog.map((c) => `<option value="${c.id}">${(c.name || "card").replace(/</g, "")}</option>`).join("") +
+    `<option value="__upload">Upload image…</option>`;
+
+  async function handleUpload(applyTo) {
+    const file = await pickImageFile();
+    if (!file) return null;
+    const url = await fileToDataURL(file);
+    const id = "up-" + catalog.length;
+    catalog.push({ id, name: "⬆ " + (file.name || "image"), imageUrl: url });
+    rebuildLists(applyTo, id);
+    return id;
+  }
+  function rebuildLists(applyIndex, applyId) {
+    setAll.innerHTML = `<option value="">—</option>` + optionsHtml();
+    [...listEl.querySelectorAll("select")].forEach((sel, i) => {
+      const keep = sel.value; sel.innerHTML = optionsHtml();
+      sel.value = (applyIndex === i && applyId) ? applyId : (backSel[i] || "none");
+      backSel[i] = sel.value;
+    });
+    if (applyIndex != null && applyId) { backSel[applyIndex] = applyId; }
+  }
+  fronts.forEach((f, i) => {
+    const rowEl = document.createElement("div");
+    rowEl.className = "prop-row"; rowEl.style.margin = "5px 0";
+    rowEl.innerHTML = `<label style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${(f.name || "card").replace(/</g, "")}</label>`;
+    const sel = document.createElement("select"); sel.innerHTML = optionsHtml(); sel.value = "none";
+    sel.addEventListener("change", async () => {
+      if (sel.value === "__upload") { sel.value = backSel[i] || "none"; await handleUpload(i); }
+      else backSel[i] = sel.value;
+    });
+    rowEl.appendChild(sel); listEl.appendChild(rowEl);
+  });
+  setAll.innerHTML = `<option value="">—</option>` + optionsHtml();
+  setAll.addEventListener("change", async () => {
+    let id = setAll.value; if (!id) return;
+    if (id === "__upload") { id = await handleUpload(null); if (!id) { setAll.value = ""; return; } }
+    backSel.fill(id);
+    [...listEl.querySelectorAll("select")].forEach((s) => { s.value = id; });
+    setAll.value = "";
+  });
+  const duplex = body.querySelector("#pj-duplex");
+  duplex.addEventListener("change", () => { body.querySelector("#pj-backs").style.display = duplex.checked ? "" : "none"; });
 
   const opts = await modal({
     title: "Arrange Print Job", body, confirmText: "Make PDF",
@@ -145,11 +202,34 @@ export async function printJobDialog(items, scopeLabel, fileName) {
         margin: parseFloat(body.querySelector("#pj-margin").value) || 0,
         gap: parseFloat(body.querySelector("#pj-gap").value) || 0,
         crop: body.querySelector("#pj-crop").checked,
+        duplex: duplex.checked,
+        flipEdge: body.querySelector("#pj-flip").value,
       });
     },
   });
   if (!opts) return;
-  await arrangePrintJob(items, { ...opts, name: fileName || "print_job" });
+
+  if (opts.duplex) {
+    const byId = new Map(catalog.map((c) => [c.id, c]));
+    const pairs = fronts.map((f, i) => {
+      const c = byId.get(backSel[i]);
+      const back = !c ? null : c.imageUrl ? c.imageUrl : c; // image url or a card item
+      return { front: f, back };
+    });
+    await arrangePrintJobDuplex(pairs, { ...opts, name: fileName || "print_job" });
+  } else {
+    await arrangePrintJob(fronts, { ...opts, name: fileName || "print_job" });
+  }
+}
+
+function pickImageFile() {
+  return new Promise((resolve) => {
+    const inp = document.createElement("input");
+    inp.type = "file"; inp.accept = "image/*"; inp.style.display = "none";
+    inp.addEventListener("change", () => resolve(inp.files[0] || null), { once: true });
+    document.body.appendChild(inp); inp.click();
+    setTimeout(() => inp.remove(), 60000);
+  });
 }
 
 async function arrangePrintJob(items, { paper, sizeMode, customWmm, customHmm, copies, margin, gap, crop, name }) {
@@ -188,4 +268,61 @@ async function arrangePrintJob(items, { paper, sizeMode, customWmm, customHmm, c
     if (crop) drawCropMarks(doc, x, y, cellW, cellH);
   }
   doc.save(safeName(name) + "_printjob.pdf");
+}
+
+// render a print item OR a raw image url to a PNG data URL
+async function renderAny(x) {
+  if (!x) return null;
+  if (typeof x === "string") return x; // already an image data url (uploaded back)
+  return renderCardDataURL({ width: x.width, height: x.height, data: x.data, fieldValues: x.fieldValues, pixelRatio: 1 });
+}
+
+// Double-sided: fronts on one page, backs on the next with a mirrored grid so a
+// duplex flip lands each back behind its card. pairs: [{ front, back }]
+async function arrangePrintJobDuplex(pairs, { paper, sizeMode, customWmm, customHmm, copies, margin, gap, crop, flipEdge, name }) {
+  const { jsPDF } = window.jspdf;
+  const sheet = PAPER[paper];
+  const cellW = sizeMode === "custom" ? customWmm : (pairs[0].front.width / DPI) * MM_PER_IN;
+  const cellH = sizeMode === "custom" ? customHmm : (pairs[0].front.height / DPI) * MM_PER_IN;
+
+  const seq = [];
+  for (const pr of pairs) for (let k = 0; k < copies; k++) seq.push(pr);
+
+  const cols = Math.max(1, Math.floor((sheet.w - 2 * margin + gap) / (cellW + gap)));
+  const rows = Math.max(1, Math.floor((sheet.h - 2 * margin + gap) / (cellH + gap)));
+  const perPage = cols * rows;
+  const gridW = cols * cellW + (cols - 1) * gap, gridH = rows * cellH + (rows - 1) * gap;
+  const ox = (sheet.w - gridW) / 2, oy = (sheet.h - gridH) / 2;
+
+  const fCache = new Map(), bCache = new Map();
+  const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: paper });
+  let firstPage = true;
+  for (let start = 0; start < seq.length; start += perPage) {
+    const chunk = seq.slice(start, start + perPage);
+    // FRONT page
+    if (!firstPage) doc.addPage(); firstPage = false;
+    for (let i = 0; i < chunk.length; i++) {
+      const col = i % cols, row = Math.floor(i / cols);
+      const x = ox + col * (cellW + gap), y = oy + row * (cellH + gap);
+      let img = fCache.get(chunk[i].front);
+      if (img === undefined) { img = await renderAny(chunk[i].front); fCache.set(chunk[i].front, img); }
+      if (img) doc.addImage(img, "PNG", x, y, cellW, cellH);
+      if (crop) drawCropMarks(doc, x, y, cellW, cellH);
+    }
+    // BACK page (mirrored for duplex alignment)
+    doc.addPage();
+    for (let i = 0; i < chunk.length; i++) {
+      const col = i % cols, row = Math.floor(i / cols);
+      const bcol = flipEdge === "short" ? col : (cols - 1 - col);
+      const brow = flipEdge === "short" ? (rows - 1 - row) : row;
+      const x = ox + bcol * (cellW + gap), y = oy + brow * (cellH + gap);
+      if (crop) drawCropMarks(doc, x, y, cellW, cellH);
+      const back = chunk[i].back;
+      if (!back) continue;
+      let img = bCache.get(back);
+      if (img === undefined) { img = await renderAny(back); bCache.set(back, img); }
+      if (img) doc.addImage(img, "PNG", x, y, cellW, cellH);
+    }
+  }
+  doc.save(safeName(name) + "_duplex.pdf");
 }

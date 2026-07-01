@@ -23,7 +23,7 @@ async function buildPrintItems(cardRows) {
     let tpl = tplCache.get(c.template_id);
     if (tpl === undefined) { tpl = await getTemplate(c.template_id); tplCache.set(c.template_id, tpl); }
     if (!tpl) continue;
-    items.push({ name: c.name || "card", width: tpl.data.width, height: tpl.data.height, data: tpl.data, fieldValues: c.field_values || {} });
+    items.push({ id: c.id, name: c.name || "card", thumb: c.thumbnail_url, width: tpl.data.width, height: tpl.data.height, data: tpl.data, fieldValues: c.field_values || {} });
   }
   return items;
 }
@@ -32,7 +32,9 @@ async function startPrintJob(cardRows, scopeLabel, fileName) {
   if (!cardRows.length) { alert("No cards to print in " + scopeLabel + "."); return; }
   const items = await buildPrintItems(cardRows);
   if (!items.length) { alert("No printable cards (their templates were deleted)."); return; }
-  printJobDialog(items, scopeLabel, fileName);
+  // catalog = every card in the game, offered as back candidates for double-sided
+  const catalog = await buildPrintItems(lastCards);
+  printJobDialog(items, catalog, scopeLabel, fileName);
 }
 
 // called by the game-header "Print Job" button (wired in main.js)
