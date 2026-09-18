@@ -1,0 +1,96 @@
+<!doctype html>
+<!-- Dev harness for the print job's JSON output mode. Builds a print item,
+     checks itemToJSON, then opens the real dialog. Not part of the app.
+     ?mode=json flips the Output toggle so both panes can be eyeballed. -->
+<meta charset="utf-8">
+<title>booting</title>
+<link rel="stylesheet" href="css/styles.css">
+<script src="https://cdn.jsdelivr.net/npm/konva@9/konva.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+<script>
+addEventListener("error", e => document.title = "FAIL " + e.message);
+addEventListener("unhandledrejection", e => document.title = "FAIL " + e.reason);
+</script>
+<body style="background:#151515;color:#ddd;font:14px system-ui;padding:16px">
+<div id="modal-root"></div>
+<pre id="out">running…</pre>
+<img id="shot" style="border:1px solid #444;max-width:300px">
+<script type="module">
+import { itemToJSON, JSON_PRESETS } from "./js/export/json.js";
+import { printJobDialog } from "./js/export/pdf.js";
+
+const out = document.getElementById("out");
+const say = (s) => { out.textContent += "\n" + s; };
+
+// Stand-in for the user's card screenshots: a card-shaped image with text on
+// it, so we can confirm the exported data URL is actually legible.
+function fakeScreenshot() {
+  const c = document.createElement("canvas");
+  c.width = 744; c.height = 1039;
+  const g = c.getContext("2d");
+  g.fillStyle = "#2b1d14"; g.fillRect(0, 0, c.width, c.height);
+  g.fillStyle = "#c9a227"; g.fillRect(24, 24, c.width - 48, c.height - 48);
+  g.fillStyle = "#1a1109"; g.fillRect(40, 40, c.width - 80, c.height - 80);
+  g.fillStyle = "#f2e2b8";
+  g.font = "bold 56px Georgia"; g.fillText("Ashen Brute", 70, 130);
+  g.font = "bold 120px Georgia"; g.fillText("II", 70, 300);
+  g.font = "28px Georgia";
+  g.fillText("Brute · Refractory", 70, 360);
+  g.fillText("+I while attacking Soldiers.", 70, 820);
+  g.fillText("This text must survive the export.", 70, 870);
+  return c.toDataURL("image/png");
+}
+
+try {
+  const art = fakeScreenshot();
+
+  // Exactly what library.js's buildPrintItems produces.
+  const item = {
+    id: "card-test", name: "Ashen Brute", thumb: null,
+    width: 750, height: 1050,
+    data: {
+      width: 750, height: 1050, background: "#000000",
+      nodes: [{ className: "Rect", attrs: { x: 0, y: 0, width: 750, height: 1050, role: "imageSlot", fieldName: "art" } }],
+    },
+    fieldValues: { art: { type: "image", url: art, scale: 1, dx: 0, dy: 0 }, __rotation: 0 },
+    folder: "Refractory",
+    template: { id: "tpl-test", name: "Full-bleed screenshot" },
+  };
+
+  const rendered = await itemToJSON(item, JSON_PRESETS.readable);
+  say(`name      ${rendered.name}`);
+  say(`folder    ${rendered.folder}`);
+  say(`template  ${rendered.template.name} ${rendered.template.width}x${rendered.template.height}`);
+  say(`fields    ${JSON.stringify(rendered.fields)}`);
+  say(`render    ${rendered.image.mime} ${rendered.image.width}x${rendered.image.height}, ${(rendered.image.dataUrl.length / 1024) | 0} KB`);
+
+  const raw = await itemToJSON(item, JSON_PRESETS.source);
+  say(`source    ${raw.image.mime} ${raw.image.width}x${raw.image.height} source=${raw.image.source}`);
+  say(`verbatim  ${raw.image.dataUrl === art}`);
+
+  document.getElementById("shot").src = rendered.image.dataUrl;
+
+  const ok = rendered.image.width > 500
+    && rendered.image.dataUrl.startsWith("data:image/jpeg")
+    && raw.image.dataUrl === art
+    && !("__rotation" in rendered.fields);
+  document.title = ok ? "PASS" : "FAIL checks";
+
+  // Open the real dialog so its two panes can be looked at.
+  printJobDialog([item, item], [], "Folder: Refractory", "gudnak");
+  if (new URLSearchParams(location.search).get("mode") === "json") {
+    await new Promise((r) => setTimeout(r, 60));
+    const sel = document.getElementById("pj-output");
+    sel.value = "json";
+    sel.dispatchEvent(new Event("change"));
+    const btn = document.querySelector(".modal-actions .btn-primary");
+    document.title += " btn=" + (btn ? btn.textContent : "?")
+      + " print=" + document.getElementById("pj-print-opts").style.display
+      + " json=" + document.getElementById("pj-json-opts").style.display;
+  }
+} catch (e) {
+  say("ERROR " + e.message + "\n" + e.stack);
+  document.title = "FAIL " + e.message;
+}
+</script>

@@ -18,12 +18,20 @@ let lastCards = [], lastFolders = [];
 // build print items (resolve each card's template, cached) from card rows
 async function buildPrintItems(cardRows) {
   const tplCache = new Map();
+  const folderById = new Map(lastFolders.map((f) => [f.id, f.name]));
   const items = [];
   for (const c of cardRows) {
     let tpl = tplCache.get(c.template_id);
     if (tpl === undefined) { tpl = await getTemplate(c.template_id); tplCache.set(c.template_id, tpl); }
     if (!tpl) continue;
-    items.push({ id: c.id, name: c.name || "card", thumb: c.thumbnail_url, width: tpl.data.width, height: tpl.data.height, data: tpl.data, fieldValues: c.field_values || {} });
+    items.push({
+      id: c.id, name: c.name || "card", thumb: c.thumbnail_url,
+      width: tpl.data.width, height: tpl.data.height, data: tpl.data,
+      fieldValues: c.field_values || {},
+      // carried for the print job's JSON output mode
+      folder: folderById.get(c.folder_id) || null,
+      template: { id: tpl.id, name: tpl.name },
+    });
   }
   return items;
 }

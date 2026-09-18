@@ -38,7 +38,7 @@ class RichText extends Konva.Shape {
     flush();
     const totalH = lines.length * lh;
     let y = valign === "middle" ? (boxH - totalH) / 2 : valign === "bottom" ? boxH - totalH : 0;
-    const boldW = (this.boldness() || 0) / 100 * fs * 0.06; // faux-bold stroke (any font)
+    const boldW = (this.boldness() || 0) / 100 * fs * 0.06; // faux-bold stroke, applied only to ⌘B (bold) runs
     ctx.textBaseline = "alphabetic";
     ctx.lineJoin = "round";
     for (const ln of lines) {
@@ -60,7 +60,7 @@ class RichText extends Konva.Shape {
         ctx.font = `${t.i ? "italic " : ""}${t.b ? "bold " : ""}${fs}px ${ff}`;
         ctx.fillStyle = fill;
         ctx.fillText(t.text, x, baseline);
-        if (boldW > 0) { ctx.strokeStyle = fill; ctx.lineWidth = boldW; ctx.strokeText(t.text, x, baseline); }
+        if (boldW > 0 && t.b) { ctx.strokeStyle = fill; ctx.lineWidth = boldW; ctx.strokeText(t.text, x, baseline); }
         x += t.w;
       }
       y += lh;

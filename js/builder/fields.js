@@ -105,15 +105,27 @@ export class FieldsPanel {
     ));
     block.appendChild(vAlignRow);
 
-    const boldRow = row("Boldness");
+    // Boldness: extra weight for ⌘B (bold) text only — plain text is unaffected
+    const boldRow = row("Bold weight");
     const bold = document.createElement("input");
     bold.type = "range"; bold.min = "0"; bold.max = "100"; bold.step = "5";
-    bold.value = String(f.node.boldness ? f.node.boldness() : 0);
-    bold.addEventListener("input", () => {
-      const v = parseFloat(bold.value) || 0;
+    const boldNum = document.createElement("input");
+    boldNum.type = "number"; boldNum.min = "0"; boldNum.max = "100"; boldNum.step = "5";
+    boldNum.style.cssText = "width:58px;flex:0 0 auto";
+    const startBold = f.node.boldness ? f.node.boldness() : 0;
+    bold.value = String(startBold); boldNum.value = String(startBold);
+    const applyBold = (v) => {
+      v = Math.max(0, Math.min(100, isNaN(v) ? 0 : v));
+      bold.value = String(v); boldNum.value = String(v);
       this._patchText(f, { boldness: v }); f.node.boldness(v); this.engine.layer.batchDraw();
-    });
-    boldRow.appendChild(bold);
+    };
+    bold.addEventListener("input", () => applyBold(parseFloat(bold.value)));
+    boldNum.addEventListener("input", () => applyBold(parseFloat(boldNum.value)));
+    const boldWrap = document.createElement("div");
+    boldWrap.style.cssText = "display:flex;gap:8px;align-items:center;flex:1";
+    const pct = el("span", "field-role", "%"); pct.style.cssText = "margin:0;flex:0 0 auto";
+    boldWrap.append(bold, boldNum, pct);
+    boldRow.appendChild(boldWrap);
     block.appendChild(boldRow);
 
     const colorRow = row("Color");

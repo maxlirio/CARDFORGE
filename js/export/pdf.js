@@ -2,6 +2,7 @@
 // size, with optional crop marks. Cards are assumed authored at 300 DPI.
 
 import { renderCardDataURL } from "../render.js";
+import { jsonOptionsMarkup, exportItemsJSON } from "./json.js";
 import { modal } from "../ui/modal.js";
 import { safeName } from "./png.js";
 import { fileToDataURL } from "../supabase.js";
@@ -119,6 +120,13 @@ export async function printJobDialog(fronts, catalog, scopeLabel, fileName) {
   const body = document.createElement("div");
   body.innerHTML = `
     <div class="muted" style="margin-bottom:10px">${scopeLabel} · ${fronts.length} card${fronts.length > 1 ? "s" : ""}</div>
+    <div class="prop-row"><label>Output</label>
+      <select id="pj-output" style="flex:1">
+        <option value="pdf">PDF — print sheet</option>
+        <option value="json">JSON — card data + images</option>
+      </select></div>
+    <div id="pj-json-opts" style="display:none">${jsonOptionsMarkup()}</div>
+    <div id="pj-print-opts">
     <div class="prop-row"><label>Paper</label>
       <select id="pj-paper"><option value="letter">${PAPER.letter.label}</option><option value="a4">${PAPER.a4.label}</option></select></div>
     <div class="prop-row"><label>Card size</label>
@@ -138,6 +146,7 @@ export async function printJobDialog(fronts, catalog, scopeLabel, fileName) {
       <div class="muted" style="margin:6px 0">Back for each card:</div>
       <div id="pj-list" style="max-height:190px;overflow:auto;border:1px solid var(--line);border-radius:6px;padding:6px"></div>
       <div class="muted" style="margin-top:6px;font-size:12px">Backs print mirrored so a duplex flip lands each back behind its card.</div>
+    </div>
     </div>
   `;
   const sizeSel = body.querySelector("#pj-size");
@@ -190,10 +199,24 @@ export async function printJobDialog(fronts, catalog, scopeLabel, fileName) {
   const duplex = body.querySelector("#pj-duplex");
   duplex.addEventListener("change", () => { body.querySelector("#pj-backs").style.display = duplex.checked ? "" : "none"; });
 
+  const outputSel = body.querySelector("#pj-output");
+
   const opts = await modal({
     title: "Arrange Print Job", body, confirmText: "Make PDF",
     onMount: (api) => {
+      // Output is a mode switch, not a second dialog: the layout controls and
+      // the JSON controls swap places, and the confirm button renames itself.
+      const okBtn = api.box.querySelector(".modal-actions .btn-primary");
+      outputSel.addEventListener("change", () => {
+        const json = outputSel.value === "json";
+        body.querySelector("#pj-print-opts").style.display = json ? "none" : "";
+        body.querySelector("#pj-json-opts").style.display = json ? "" : "none";
+        if (okBtn) okBtn.textContent = json ? "Export JSON" : "Make PDF";
+      });
       api._collect = () => ({
+        output: outputSel.value,
+        preset: body.querySelector("#pj-json-preset").value,
+        chunk: Number(body.querySelector("#pj-json-chunk").value),
         paper: body.querySelector("#pj-paper").value,
         sizeMode: sizeSel.value,
         customWmm: parseFloat(body.querySelector("#pj-cw").value) || realW,
@@ -208,6 +231,11 @@ export async function printJobDialog(fronts, catalog, scopeLabel, fileName) {
     },
   });
   if (!opts) return;
+
+  if (opts.output === "json") {
+    await exportItemsJSON(fronts, opts, scopeLabel, fileName);
+    return;
+  }
 
   if (opts.duplex) {
     const byId = new Map(catalog.map((c) => [c.id, c]));
