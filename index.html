@@ -128,6 +128,8 @@
       <input id="builder-name" class="name-input" placeholder="Untitled card" />
       <span class="muted">from</span>
       <select id="builder-template-select" class="tpl-switch" title="Switch which template this card uses"></select>
+      <!-- kept (hidden) so a stale cached builder.js that still writes here can't crash -->
+      <span id="builder-template-name" class="hidden"></span>
       <div class="spacer"></div>
       <button id="builder-rotate" class="btn btn-ghost" title="Rotate the card 90°">⟳ Rotate</button>
       <button id="builder-export-png" class="btn btn-ghost">Export PNG</button>
