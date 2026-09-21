@@ -2,7 +2,8 @@
 
 import { app } from "../state.js";
 import { navigate, refreshGame } from "../router.js";
-import { saveCard } from "../supabase.js";
+import { saveCard, listTemplates, listCards } from "../supabase.js";
+import { modal } from "../ui/modal.js";
 import { CanvasEngine } from "../editor/canvas.js";
 import { buildFromTemplate, applyFieldValues, templateFields } from "../editor/serialize.js";
 import { renderThumbnail } from "../render.js";
@@ -26,7 +27,6 @@ export async function openBuilder(templateRow, cardRow) {
       : (app.currentFolderId && app.currentFolderId !== "unfiled" ? app.currentFolderId : null),
   };
   document.getElementById("builder-name").value = app.builder.name;
-  document.getElementById("builder-template-name").textContent = `from “${templateRow.name || "template"}”`;
 
   if (bctx?.engine) bctx.engine.destroy();
   const host = document.getElementById("builder-stage");
@@ -50,10 +50,93 @@ export async function openBuilder(templateRow, cardRow) {
   bctx = { engine, fieldValues, data };
   if (typeof window !== "undefined") window.__builder = bctx; // debug/test handle
 
+  wireTemplateSwitch(templateRow);
   wireZoom(engine);
   wireRotate(engine, fieldValues);
   wireSave();
   wireExports();
+}
+
+// dropdown in the builder header: switch which template this card is built from.
+// Field values are keyed by field NAME, so they carry over wherever names match.
+function wireTemplateSwitch(currentTpl) {
+  const sel = document.getElementById("builder-template-select");
+  sel.innerHTML = "";
+  const cur = document.createElement("option");
+  cur.value = currentTpl.id; cur.textContent = currentTpl.name || "template";
+  sel.appendChild(cur);
+  sel.value = currentTpl.id;
+
+  listTemplates(app.builder.gameId).then((tpls) => {
+    bctx.templates = tpls;
+    sel.innerHTML = "";
+    for (const t of tpls) {
+      const o = document.createElement("option");
+      o.value = t.id; o.textContent = t.name || "Untitled";
+      sel.appendChild(o);
+    }
+    if (!tpls.some((t) => t.id === currentTpl.id)) sel.appendChild(cur);
+    sel.value = currentTpl.id;
+  });
+
+  sel.onchange = () => switchTemplate(sel, currentTpl);
+}
+
+async function switchTemplate(sel, oldTpl) {
+  const tpl = (bctx.templates || []).find((t) => t.id === sel.value);
+  if (!tpl || tpl.id === oldTpl.id) { sel.value = oldTpl.id; return; }
+
+  const cardId = app.builder.id;
+  const name = (document.getElementById("builder-name").value || "Untitled card").trim();
+  let moveOthers = false, others = [];
+
+  if (cardId) {
+    others = (await listCards(app.builder.gameId))
+      .filter((c) => c.template_id === oldTpl.id && c.id !== cardId);
+    const body = document.createElement("div");
+    const p = document.createElement("p");
+    p.textContent = `This card will be rebuilt on “${tpl.name || "Untitled"}”. Fields with matching names keep their values.`;
+    body.appendChild(p);
+    let chk = null;
+    if (others.length) {
+      const lab = document.createElement("label");
+      lab.style.display = "flex"; lab.style.gap = "8px"; lab.style.alignItems = "center";
+      chk = document.createElement("input"); chk.type = "checkbox";
+      lab.appendChild(chk);
+      lab.appendChild(document.createTextNode(
+        `Also move the other ${others.length} card${others.length > 1 ? "s" : ""} still on “${oldTpl.name || "Untitled"}”`));
+      body.appendChild(lab);
+    }
+    const ok = await modal({ title: "Switch template?", body, confirmText: "Switch" });
+    if (!ok) { sel.value = oldTpl.id; return; }
+    moveOthers = chk?.checked || false;
+  }
+
+  const fieldValues = bctx.fieldValues;
+  await openBuilder(tpl, {
+    id: cardId, name, folder_id: app.builder.folderId, field_values: fieldValues,
+  });
+
+  if (cardId) {
+    // persist the switch for this card right away (stay in the builder)
+    const thumbnail_url = await renderThumbnail({
+      width: tpl.data.width, height: tpl.data.height, data: tpl.data, fieldValues,
+    });
+    await saveCard({
+      id: cardId, template_id: tpl.id, game_id: app.builder.gameId,
+      folder_id: app.builder.folderId, name, field_values: fieldValues, thumbnail_url,
+    });
+  }
+  if (moveOthers) {
+    for (const c of others) {
+      const thumb = await renderThumbnail({
+        width: tpl.data.width, height: tpl.data.height, data: tpl.data,
+        fieldValues: c.field_values || {},
+      });
+      await saveCard({ id: c.id, template_id: tpl.id, thumbnail_url: thumb });
+    }
+  }
+  if (cardId) refreshGame();
 }
 
 function wireZoom(engine) {

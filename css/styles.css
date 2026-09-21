@@ -64,6 +64,10 @@ body.has-banner .view { height: calc(100vh - 34px); }
   padding: 7px 10px; border-radius: var(--radius); font-size: 15px; min-width: 220px;
 }
 .user-email { color: var(--muted); font-size: 13px; }
+.tpl-switch {
+  background: var(--panel-2); color: var(--text); border: 1px solid var(--line);
+  border-radius: 6px; padding: 6px; font-size: 13px; max-width: 220px;
+}
 .size-preset { font-size: 13px; color: var(--muted); display: flex; gap: 6px; align-items: center; }
 .size-preset select {
   background: var(--panel-2); color: var(--text); border: 1px solid var(--line);
