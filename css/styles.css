@@ -105,7 +105,7 @@ body.has-banner .view { height: calc(100vh - 34px); }
 .lib-meta { padding: 9px 11px; }
 .lib-meta .lib-title { font-size: 14px; font-weight: 600; }
 .lib-meta .lib-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
-.lib-actions { display: flex; gap: 8px; padding: 0 11px 11px; }
+.lib-actions { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 11px 11px; }
 .lib-actions button { font-size: 12px; padding: 5px 9px; }
 .empty-hint { color: var(--muted); font-size: 14px; padding: 8px 0; }
 

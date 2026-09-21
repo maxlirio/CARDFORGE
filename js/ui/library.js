@@ -152,6 +152,7 @@ export async function renderGame() {
       onOpen: () => openCard(c),
       actions: [
         ["Open", () => openCard(c)],
+        ["Copy", () => copyCard(c)],
         ["Print", () => startPrintJob([c], "Card: " + (c.name || "card"), c.name || "card")],
         ["Delete", async () => { if (confirm("Delete this card?")) { await deleteCard(c.id); renderGame(); } }, "danger"],
       ],
@@ -161,6 +162,27 @@ export async function renderGame() {
     cardEl.addEventListener("dragend", () => cardEl.classList.remove("dragging"));
     cGrid.appendChild(cardEl);
   }
+}
+
+// duplicate a card N times (same template, folder, values, and thumbnail)
+async function copyCard(c) {
+  const raw = await promptText({
+    title: `Copy “${c.name || "Untitled card"}” — how many copies?`,
+    value: "1",
+  });
+  if (raw === null) return;
+  const n = Math.min(100, Math.max(1, parseInt(raw, 10) || 1));
+  for (let i = 0; i < n; i++) {
+    await saveCard({
+      game_id: c.game_id,
+      folder_id: c.folder_id,
+      template_id: c.template_id,
+      name: c.name,
+      field_values: structuredClone(c.field_values || {}),
+      thumbnail_url: c.thumbnail_url,
+    });
+  }
+  renderGame();
 }
 
 async function openCard(c) {
