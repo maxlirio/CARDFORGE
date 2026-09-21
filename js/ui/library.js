@@ -3,7 +3,7 @@
 import {
   listGames, saveGame, deleteGame,
   listFolders, saveFolder, deleteFolder,
-  listTemplates, listCards, deleteTemplate, deleteCard, getTemplate, saveCard,
+  listTemplates, listCards, deleteTemplate, deleteCard, getTemplate, saveCard, saveTemplate,
 } from "../supabase.js";
 import { app } from "../state.js";
 import { navigate } from "../router.js";
@@ -129,6 +129,7 @@ export async function renderGame() {
       actions: [
         ["Use", () => openBuilder(t, null)],
         ["Edit", () => openEditor(t)],
+        ["Copy", () => copyTemplate(t)],
         ["Export", () => exportTemplate(t)],
         ["Delete", async () => { if (confirm("Delete this template?")) { await deleteTemplate(t.id); renderGame(); } }, "danger"],
       ],
@@ -162,6 +163,24 @@ export async function renderGame() {
     cardEl.addEventListener("dragend", () => cardEl.classList.remove("dragging"));
     cGrid.appendChild(cardEl);
   }
+}
+
+// duplicate a template under a new name (cards keep pointing at the original)
+async function copyTemplate(t) {
+  const name = await promptText({
+    title: "Copy template — name for the copy?",
+    value: (t.name || "Untitled") + " copy",
+  });
+  if (!name) return;
+  await saveTemplate({
+    game_id: t.game_id,
+    name,
+    width: t.width,
+    height: t.height,
+    data: structuredClone(t.data),
+    thumbnail_url: t.thumbnail_url,
+  });
+  renderGame();
 }
 
 // duplicate a card N times (same template, folder, values, and thumbnail)
