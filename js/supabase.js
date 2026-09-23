@@ -15,6 +15,110 @@ if (CLOUD) {
 }
 
 /* ============================================================
+ * OFFLINE SUPPORT (cloud mode)
+ * Reads are mirrored into IndexedDB; writes that can't reach the
+ * server land in the mirror + an outbox, flushed when back online.
+ * ========================================================== */
+
+const MIRROR_PREFIX = "cfc_";
+const OUTBOX_KEY = "cfc_outbox";
+
+function isOffline(err) {
+  if (typeof navigator !== "undefined" && !navigator.onLine) return true;
+  return /fetch|network|load failed|connection|timed?.?out/i.test(String(err?.message || err || ""));
+}
+
+async function mirrorList(table) { return (await idbGet(MIRROR_PREFIX + table)) || []; }
+async function mirrorPut(table, rows) { await idbSet(MIRROR_PREFIX + table, rows); }
+async function mirrorUpsert(table, row) {
+  const all = await mirrorList(table);
+  const i = all.findIndex((r) => r.id === row.id);
+  if (i >= 0) all[i] = { ...all[i], ...row };
+  else all.unshift(row);
+  await mirrorPut(table, all);
+}
+async function mirrorMerge(table, rows) {
+  const all = await mirrorList(table);
+  const byId = new Map(all.map((r) => [r.id, r]));
+  for (const r of rows) byId.set(r.id, r);
+  await mirrorPut(table, [...byId.values()]);
+}
+async function mirrorRemove(table, pred) {
+  await mirrorPut(table, (await mirrorList(table)).filter((r) => !pred(r)));
+}
+
+async function outboxPush(op) {
+  const q = (await idbGet(OUTBOX_KEY)) || [];
+  q.push(op);
+  await idbSet(OUTBOX_KEY, q);
+  notifySync();
+}
+
+export async function pendingCount() {
+  if (!CLOUD) return 0;
+  return ((await idbGet(OUTBOX_KEY)) || []).length;
+}
+
+function notifySync() {
+  if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("cf-sync"));
+}
+
+let flushing = false;
+export async function flushOutbox() {
+  if (!CLOUD || flushing || (typeof navigator !== "undefined" && !navigator.onLine)) return;
+  flushing = true;
+  try {
+    let q = (await idbGet(OUTBOX_KEY)) || [];
+    while (q.length) {
+      const op = q[0];
+      if (op.op === "save") {
+        const { error } = await sb.from(op.table).upsert(op.row);
+        if (error) throw error;
+        const rows = await mirrorList(op.table);
+        const i = rows.findIndex((r) => r.id === op.row.id);
+        if (i >= 0) { delete rows[i]._pending; await mirrorPut(op.table, rows); }
+      } else if (op.op === "delete") {
+        const { error } = await sb.from(op.table).delete().eq("id", op.id);
+        if (error) throw error;
+      } else if (op.op === "unfolder") {
+        const { error } = await sb.from("cards").update({ folder_id: null }).eq("folder_id", op.id);
+        if (error) throw error;
+      }
+      q = q.slice(1);
+      await idbSet(OUTBOX_KEY, q);
+      notifySync();
+    }
+  } catch {
+    // still offline (or rejected) — retry on the next 'online' event
+  } finally {
+    flushing = false;
+    notifySync();
+  }
+}
+
+if (typeof window !== "undefined" && CLOUD) {
+  window.addEventListener("online", () => flushOutbox());
+  setTimeout(() => flushOutbox(), 2000); // catch up shortly after boot
+}
+
+// list with write-through mirror + offline fallback
+async function cloudList(table, gameId, order) {
+  try {
+    let q = sb.from(table).select("*").order(order.col, { ascending: order.asc });
+    if (gameId) q = q.eq("game_id", gameId);
+    const { data, error } = await q;
+    if (error) throw error;
+    await mirrorMerge(table, data);
+    return data;
+  } catch (e) {
+    if (!isOffline(e)) throw e;
+    let rows = await mirrorList(table);
+    if (gameId) rows = rows.filter((r) => r.game_id === gameId);
+    return rows;
+  }
+}
+
+/* ============================================================
  * AUTH
  * ========================================================== */
 
@@ -79,11 +183,7 @@ async function currentUserId() {
  * ========================================================== */
 
 export async function listGames() {
-  if (CLOUD) {
-    const { data, error } = await sb.from("games").select("*").order("updated_at", { ascending: false });
-    if (error) throw error;
-    return data;
-  }
+  if (CLOUD) return cloudList("games", null, { col: "updated_at", asc: false });
   return idbList("cf_games");
 }
 
@@ -91,8 +191,17 @@ export async function saveGame(game) { return saveRow("games", "cf_games", game)
 
 export async function deleteGame(id) {
   if (CLOUD) {
-    const { error } = await sb.from("games").delete().eq("id", id); // FK cascade clears children
-    if (error) throw error;
+    try {
+      const { error } = await sb.from("games").delete().eq("id", id); // FK cascade clears children
+      if (error) throw error;
+    } catch (e) {
+      if (!isOffline(e)) throw e;
+      await outboxPush({ op: "delete", table: "games", id }); // server cascade on flush
+    }
+    await mirrorRemove("games", (g) => g.id === id);
+    await mirrorRemove("folders", (f) => f.game_id === id);
+    await mirrorRemove("templates", (t) => t.game_id === id);
+    await mirrorRemove("cards", (c) => c.game_id === id);
     return;
   }
   // demo: cascade manually
@@ -103,11 +212,7 @@ export async function deleteGame(id) {
 }
 
 export async function listFolders(gameId) {
-  if (CLOUD) {
-    const { data, error } = await sb.from("folders").select("*").eq("game_id", gameId).order("created_at");
-    if (error) throw error;
-    return data;
-  }
+  if (CLOUD) return cloudList("folders", gameId, { col: "created_at", asc: true });
   return (await idbList("cf_folders")).filter((f) => f.game_id === gameId);
 }
 
@@ -115,10 +220,21 @@ export async function saveFolder(folder) { return saveRow("folders", "cf_folders
 
 export async function deleteFolder(id) {
   if (CLOUD) {
-    // null out cards in this folder, then delete it
-    await sb.from("cards").update({ folder_id: null }).eq("folder_id", id);
-    const { error } = await sb.from("folders").delete().eq("id", id);
-    if (error) throw error;
+    try {
+      // null out cards in this folder, then delete it
+      const r1 = await sb.from("cards").update({ folder_id: null }).eq("folder_id", id);
+      if (r1.error) throw r1.error;
+      const { error } = await sb.from("folders").delete().eq("id", id);
+      if (error) throw error;
+    } catch (e) {
+      if (!isOffline(e)) throw e;
+      await outboxPush({ op: "unfolder", id });
+      await outboxPush({ op: "delete", table: "folders", id });
+    }
+    const cards = await mirrorList("cards");
+    cards.forEach((c) => { if (c.folder_id === id) c.folder_id = null; });
+    await mirrorPut("cards", cards);
+    await mirrorRemove("folders", (f) => f.id === id);
     return;
   }
   const cards = await idbList("cf_cards");
@@ -169,13 +285,7 @@ export async function ensureLocalMigration() {
  * ========================================================== */
 
 export async function listTemplates(gameId) {
-  if (CLOUD) {
-    let q = sb.from("templates").select("*").order("updated_at", { ascending: false });
-    if (gameId) q = q.eq("game_id", gameId);
-    const { data, error } = await q;
-    if (error) throw error;
-    return data;
-  }
+  if (CLOUD) return cloudList("templates", gameId, { col: "updated_at", asc: false });
   let all = await idbList("cf_templates");
   if (gameId) all = all.filter((t) => t.game_id === gameId);
   return all;
@@ -191,21 +301,21 @@ export async function deleteTemplate(id) {
 
 export async function getTemplate(id) {
   if (CLOUD) {
-    const { data, error } = await sb.from("templates").select("*").eq("id", id).single();
-    if (error) throw error;
-    return data;
+    try {
+      const { data, error } = await sb.from("templates").select("*").eq("id", id).single();
+      if (error) throw error;
+      await mirrorUpsert("templates", data);
+      return data;
+    } catch (e) {
+      if (!isOffline(e)) throw e;
+      return (await mirrorList("templates")).find((t) => t.id === id) || null;
+    }
   }
   return (await idbList("cf_templates")).find((t) => t.id === id) || null;
 }
 
 export async function listCards(gameId) {
-  if (CLOUD) {
-    let q = sb.from("cards").select("*").order("updated_at", { ascending: false });
-    if (gameId) q = q.eq("game_id", gameId);
-    const { data, error } = await q;
-    if (error) throw error;
-    return data;
-  }
+  if (CLOUD) return cloudList("cards", gameId, { col: "updated_at", asc: false });
   let all = await idbList("cf_cards");
   if (gameId) all = all.filter((c) => c.game_id === gameId);
   return all;
@@ -227,14 +337,29 @@ async function saveRow(table, lsKey, row) {
   const payload = { ...row, user_id: uid, updated_at: now };
 
   if (CLOUD) {
-    let res;
-    if (row.id) {
-      res = await sb.from(table).update(payload).eq("id", row.id).select().single();
-    } else {
-      res = await sb.from(table).insert({ ...payload, created_at: now }).select().single();
+    const isNew = !row.id;
+    // ids are minted client-side so offline saves work the same as online ones
+    if (isNew) { payload.id = crypto.randomUUID(); payload.created_at = now; }
+    try {
+      let res;
+      if (isNew) {
+        res = await sb.from(table).insert(payload).select().single();
+      } else {
+        res = await sb.from(table).update(payload).eq("id", row.id).select().single();
+      }
+      if (res.error) throw res.error;
+      await mirrorUpsert(table, res.data);
+      return res.data;
+    } catch (e) {
+      if (!isOffline(e)) throw e;
+      // offline: keep it locally and queue the write
+      const base = isNew ? {} : (await mirrorList(table)).find((r) => r.id === row.id) || {};
+      const localRow = { ...base, ...payload, _pending: true };
+      await mirrorUpsert(table, localRow);
+      const { _pending, ...outRow } = localRow;
+      await outboxPush({ op: "save", table, row: outRow });
+      return localRow;
     }
-    if (res.error) throw res.error;
-    return res.data;
   }
 
   // local (IndexedDB)
@@ -254,8 +379,14 @@ async function saveRow(table, lsKey, row) {
 
 async function deleteRow(table, lsKey, id) {
   if (CLOUD) {
-    const { error } = await sb.from(table).delete().eq("id", id);
-    if (error) throw error;
+    try {
+      const { error } = await sb.from(table).delete().eq("id", id);
+      if (error) throw error;
+    } catch (e) {
+      if (!isOffline(e)) throw e;
+      await outboxPush({ op: "delete", table, id });
+    }
+    await mirrorRemove(table, (r) => r.id === id);
     return;
   }
   await idbSet(lsKey, (await idbList(lsKey)).filter((r) => r.id !== id));
@@ -272,13 +403,19 @@ async function idbList(key) {
 
 export async function uploadImage(file) {
   if (CLOUD) {
-    const uid = await currentUserId();
-    const ext = (file.name.split(".").pop() || "png").toLowerCase();
-    const path = `${uid}/${Date.now()}-${Math.abs(hashStr(file.name))}.${ext}`;
-    const { error } = await sb.storage.from("card-images").upload(path, file, { upsert: true });
-    if (error) throw error;
-    const { data } = sb.storage.from("card-images").getPublicUrl(path);
-    return data.publicUrl;
+    try {
+      const uid = await currentUserId();
+      const ext = (file.name.split(".").pop() || "png").toLowerCase();
+      const path = `${uid}/${Date.now()}-${Math.abs(hashStr(file.name))}.${ext}`;
+      const { error } = await sb.storage.from("card-images").upload(path, file, { upsert: true });
+      if (error) throw error;
+      const { data } = sb.storage.from("card-images").getPublicUrl(path);
+      return data.publicUrl;
+    } catch (e) {
+      if (!isOffline(e)) throw e;
+      // offline: inline the image as a data URL so the card still works
+      return fileToDataURL(file);
+    }
   }
   // demo: inline as a data URL (kept inside the card's JSON)
   return fileToDataURL(file);

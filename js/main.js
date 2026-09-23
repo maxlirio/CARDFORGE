@@ -1,6 +1,6 @@
 // Entry point: auth gate + wiring between views.
 
-import { CLOUD, getSession, signOut, saveGame, saveFolder, saveTemplate, ensureLocalMigration } from "./supabase.js";
+import { CLOUD, getSession, signOut, saveGame, saveFolder, saveTemplate, ensureLocalMigration, pendingCount, flushOutbox } from "./supabase.js";
 import { app, on } from "./state.js";
 import { navigate } from "./router.js";
 import { initAuthUI } from "./ui/auth-ui.js";
@@ -27,8 +27,45 @@ function showDemoBanner() {
   }
 }
 
+/* ---- offline mode: app shell cache + sync status pill ---- */
+
+function initOffline() {
+  if ("serviceWorker" in navigator) {
+    try { navigator.serviceWorker.register("sw.js"); } catch {}
+  }
+  window.addEventListener("online", () => { flushOutbox(); updateNetPill(); });
+  window.addEventListener("offline", updateNetPill);
+  window.addEventListener("cf-sync", updateNetPill);
+  updateNetPill();
+}
+
+let wasOfflineOrSyncing = false;
+async function updateNetPill() {
+  const pill = document.getElementById("net-pill");
+  if (!pill) return;
+  const n = await pendingCount();
+  const offline = !navigator.onLine;
+  if (offline) {
+    wasOfflineOrSyncing = true;
+    pill.textContent = "Offline — work is saved on this device";
+    pill.className = "net-pill off";
+  } else if (n > 0) {
+    wasOfflineOrSyncing = true;
+    pill.textContent = `Syncing ${n} change${n > 1 ? "s" : ""}…`;
+    pill.className = "net-pill sync";
+  } else if (wasOfflineOrSyncing) {
+    wasOfflineOrSyncing = false;
+    pill.textContent = CLOUD ? "✓ Updated — all changes synced" : "✓ Back online";
+    pill.className = "net-pill ok";
+    setTimeout(() => { if (pill.classList.contains("ok")) pill.className = "net-pill hidden"; }, 3000);
+  } else {
+    pill.className = "net-pill hidden";
+  }
+}
+
 async function boot() {
   showDemoBanner();
+  initOffline();
   initCustomFonts(); // re-register user-uploaded fonts (non-blocking)
 
   initAuthUI((session) => {

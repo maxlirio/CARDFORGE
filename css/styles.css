@@ -64,6 +64,15 @@ body.has-banner .view { height: calc(100vh - 34px); }
   padding: 7px 10px; border-radius: var(--radius); font-size: 15px; min-width: 220px;
 }
 .user-email { color: var(--muted); font-size: 13px; }
+.net-pill {
+  position: fixed; bottom: 16px; right: 16px; z-index: 2000;
+  padding: 7px 14px; border-radius: 999px; font-size: 13px;
+  background: var(--panel-2); border: 1px solid var(--line); color: var(--text);
+  box-shadow: 0 4px 14px rgba(0,0,0,.35); pointer-events: none;
+}
+.net-pill.off { border-color: #b98a2e; color: #e8c675; }
+.net-pill.sync { border-color: var(--accent); }
+.net-pill.ok { border-color: #3f9e5f; color: #7fd89e; }
 .tpl-switch {
   background: var(--panel-2); color: var(--text); border: 1px solid var(--line);
   border-radius: 6px; padding: 6px; font-size: 13px; max-width: 220px;
