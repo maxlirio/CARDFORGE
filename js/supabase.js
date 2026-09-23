@@ -329,6 +329,97 @@ export async function deleteCard(id) {
   return deleteRow("cards", "cf_cards", id);
 }
 
+/* ============================================================
+ * DEMO → CLOUD MIGRATION
+ * When cloud sync is first enabled, work from local demo mode is
+ * still in IndexedDB under cf_* keys. These helpers import it into
+ * the signed-in account (new uuids, FKs remapped), keeping a backup.
+ * ========================================================== */
+
+export async function localDemoDataSummary() {
+  if (!CLOUD) return null;
+  const [games, folders, templates, cards] = await Promise.all(
+    ["cf_games", "cf_folders", "cf_templates", "cf_cards"].map(idbList));
+  if (!games.length && !templates.length && !cards.length) return null;
+  return { games: games.length, folders: folders.length, templates: templates.length, cards: cards.length };
+}
+
+// pure: remap demo rows (loc-* ids) onto fresh uuids with FKs rewritten
+export function remapDemoRows(raw, uid) {
+  const now = new Date().toISOString();
+  const map = new Map();
+  const fresh = (oldId) => { const n = crypto.randomUUID(); if (oldId != null) map.set(oldId, n); return n; };
+
+  const games = (raw.games || []).map((g) => ({
+    id: fresh(g.id), user_id: uid, name: g.name || "My Cards",
+    created_at: g.created_at || now, updated_at: now,
+  }));
+
+  let orphanId = null; // rows whose game vanished land in an "Imported" game
+  const gameRef = (id) => {
+    if (map.has(id)) return map.get(id);
+    if (!orphanId) {
+      orphanId = crypto.randomUUID();
+      games.push({ id: orphanId, user_id: uid, name: "Imported", created_at: now, updated_at: now });
+    }
+    return orphanId;
+  };
+
+  const folders = (raw.folders || []).map((f) => ({
+    id: fresh(f.id), user_id: uid, game_id: gameRef(f.game_id),
+    name: f.name || "Folder", created_at: f.created_at || now,
+  }));
+  const templates = (raw.templates || []).map((t) => ({
+    id: fresh(t.id), user_id: uid, game_id: gameRef(t.game_id),
+    name: t.name || "Untitled", width: t.width, height: t.height,
+    data: t.data, thumbnail_url: t.thumbnail_url || null,
+    created_at: t.created_at || now, updated_at: now,
+  }));
+  const cards = (raw.cards || []).map((c) => ({
+    id: fresh(c.id), user_id: uid, game_id: gameRef(c.game_id),
+    folder_id: map.get(c.folder_id) || null,
+    template_id: map.get(c.template_id) || null,
+    name: c.name || "Untitled card", field_values: c.field_values || {},
+    thumbnail_url: c.thumbnail_url || null,
+    created_at: c.created_at || now, updated_at: now,
+  }));
+  return { games, folders, templates, cards };
+}
+
+async function upsertChunked(table, rows, size, onProgress) {
+  for (let i = 0; i < rows.length; i += size) {
+    const { error } = await sb.from(table).upsert(rows.slice(i, i + size));
+    if (error) throw new Error(table + ": " + error.message);
+    onProgress?.(`${table}: ${Math.min(i + size, rows.length)}/${rows.length}`);
+  }
+}
+
+export async function migrateLocalToCloud(onProgress) {
+  if (!CLOUD) throw new Error("Cloud sync is not configured.");
+  const uid = await currentUserId();
+  if (!uid) throw new Error("Sign in first.");
+
+  const raw = {
+    games: await idbList("cf_games"), folders: await idbList("cf_folders"),
+    templates: await idbList("cf_templates"), cards: await idbList("cf_cards"),
+  };
+  // reuse a saved plan so a retry after partial failure upserts the SAME uuids
+  let plan = await idbGet("cf_migration_plan_v1");
+  if (!plan || plan.uid !== uid) {
+    plan = { uid, ...remapDemoRows(raw, uid) };
+    await idbSet("cf_migration_plan_v1", plan);
+  }
+  await upsertChunked("games", plan.games, 50, onProgress);
+  await upsertChunked("folders", plan.folders, 50, onProgress);
+  await upsertChunked("templates", plan.templates, 5, onProgress); // jsonb can be heavy
+  await upsertChunked("cards", plan.cards, 10, onProgress);
+
+  await idbSet("cf_demo_backup_v1", raw); // keep the originals, just in case
+  for (const k of ["cf_games", "cf_folders", "cf_templates", "cf_cards"]) await idbSet(k, []);
+  await idbSet("cf_migration_plan_v1", null);
+  return { games: plan.games.length, folders: plan.folders.length, templates: plan.templates.length, cards: plan.cards.length };
+}
+
 /* ---- generic row helpers ---- */
 
 async function saveRow(table, lsKey, row) {

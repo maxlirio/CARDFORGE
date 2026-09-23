@@ -1,6 +1,10 @@
 // Entry point: auth gate + wiring between views.
 
-import { CLOUD, getSession, signOut, saveGame, saveFolder, saveTemplate, ensureLocalMigration, pendingCount, flushOutbox } from "./supabase.js";
+import {
+  CLOUD, getSession, signOut, saveGame, saveFolder, saveTemplate, ensureLocalMigration,
+  pendingCount, flushOutbox, localDemoDataSummary, migrateLocalToCloud,
+} from "./supabase.js";
+import { modal } from "./ui/modal.js";
 import { app, on } from "./state.js";
 import { navigate } from "./router.js";
 import { initAuthUI } from "./ui/auth-ui.js";
@@ -153,6 +157,35 @@ async function enterApp() {
   await ensureLocalMigration(); // fold pre-games local data into a default game
   renderGames();
   navigate("games");
+  maybeOfferCloudImport(); // cloud mode: import leftover demo-mode work
+}
+
+// First sign-in after enabling cloud sync: this browser may hold months of
+// demo-mode work. Offer to import it into the account (a backup is kept).
+async function maybeOfferCloudImport() {
+  if (!CLOUD) return;
+  const s = await localDemoDataSummary().catch(() => null);
+  if (!s) return;
+  const body = document.createElement("div");
+  const p1 = document.createElement("p");
+  p1.textContent = `This browser has work saved from local mode: ` +
+    `${s.games} game${s.games === 1 ? "" : "s"}, ${s.templates} template${s.templates === 1 ? "" : "s"}, ` +
+    `${s.cards} card${s.cards === 1 ? "" : "s"}${s.folders ? `, ${s.folders} folders` : ""}.`;
+  const p2 = document.createElement("p");
+  p2.textContent = "Import it into your account? A local backup is kept either way.";
+  const prog = document.createElement("p");
+  prog.className = "muted";
+  body.append(p1, p2, prog);
+  const ok = await modal({ title: "Import your local work?", body, confirmText: "Import", cancelText: "Not now" });
+  if (!ok) return;
+  try {
+    const res = await migrateLocalToCloud();
+    alert(`Imported ${res.games} games, ${res.templates} templates, ${res.cards} cards.`);
+    renderGames();
+  } catch (e) {
+    alert("Import didn't finish: " + (e.message || e) +
+      "\nNothing was lost — sign in again (online) and it will resume where it stopped.");
+  }
 }
 
 boot();
