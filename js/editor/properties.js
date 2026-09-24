@@ -43,6 +43,8 @@ export class PropertiesPanel {
       h.appendChild(g);
     }
 
+    h.appendChild(this._sizeGroup(node));
+
     const g = group("Appearance");
     if (cls === "RichText" || cls === "Text") {
       g.appendChild(this._textareaRow("Placeholder", node.getPlainText ? node.getPlainText() : node.text(), (v) => {
@@ -68,6 +70,44 @@ export class PropertiesPanel {
     h.appendChild(g);
 
     h.appendChild(this._arrangeGroup(node));
+  }
+
+  /* -------------------- exact position & size -------------------- */
+  _sizeGroup(node) {
+    const g = group("Position & size");
+    const num = (label, get, set) => {
+      const r = this._row(label);
+      const i = el("input");
+      i.type = "number"; i.step = "any"; i.value = Math.round(get() * 10) / 10;
+      i.addEventListener("change", () => {
+        const v = parseFloat(i.value);
+        if (Number.isFinite(v)) { set(v); this.engine.transformer.forceUpdate(); this._commit(); }
+      });
+      r.appendChild(i);
+      return r;
+    };
+
+    const cls = node.className;
+    // Ellipses are positioned by their centre; everything else by top-left.
+    g.appendChild(num(cls === "Ellipse" ? "Center X" : "X", () => node.x(), (v) => node.x(v)));
+    g.appendChild(num(cls === "Ellipse" ? "Center Y" : "Y", () => node.y(), (v) => node.y(v)));
+    if (cls === "Ellipse") {
+      g.appendChild(num("W", () => node.radiusX() * 2, (v) => node.radiusX(Math.max(1, v) / 2)));
+      g.appendChild(num("H", () => node.radiusY() * 2, (v) => node.radiusY(Math.max(1, v) / 2)));
+    } else if (typeof node.width === "function" && cls !== "Line") {
+      g.appendChild(num("W", () => node.width() * node.scaleX(), (v) => { node.width(Math.max(1, v)); node.scaleX(1); }));
+      g.appendChild(num("H", () => node.height() * node.scaleY(), (v) => { node.height(Math.max(1, v)); node.scaleY(1); }));
+    }
+    g.appendChild(num("Rotation", () => node.rotation() || 0, (v) => node.rotation(v)));
+
+    // keep the numbers honest after a drag or transformer resize
+    if (this._boundNode && this._boundNode !== node) this._boundNode.off(".propsPanel");
+    this._boundNode = node;
+    node.off(".propsPanel");
+    node.on("dragend.propsPanel transformend.propsPanel", () => {
+      if (this.engine.selection.length === 1 && this.engine.selection[0] === node) this.render([node]);
+    });
+    return g;
   }
 
   /* -------------------- multi selection -------------------- */
