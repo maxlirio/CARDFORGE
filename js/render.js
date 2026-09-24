@@ -4,12 +4,12 @@
 // is always print resolution.
 
 import { buildFromTemplate, applyFieldValues } from "./editor/serialize.js";
-import { cardCornerRadius, roundRectPath } from "./editor/canvas.js";
+import { cardClipPath, cardBgRadius } from "./editor/canvas.js";
 
 const Konva = window.Konva;
 
 // minimal engine-like that buildFromTemplate / applyFieldValues understand
-function makeOffscreen(width, height, rotation = 0) {
+function makeOffscreen(width, height, rotation = 0, shape = "rect") {
   const container = document.createElement("div");
   container.style.cssText = "position:absolute;left:-99999px;top:0;";
   document.body.appendChild(container);
@@ -19,13 +19,13 @@ function makeOffscreen(width, height, rotation = 0) {
   const layer = new Konva.Layer();
   stage.add(layer);
 
-  // root pivots on the card centre, carries the rotation, and clips to the rounded
-  // card rect (rounded corners + overflow cut off) — mirroring CanvasEngine.
-  const radius = cardCornerRadius(width, height);
+  // root pivots on the card centre, carries the rotation, and clips to the card
+  // outline (rounded rect, or circle for tokens) — mirroring CanvasEngine.
+  const radius = cardBgRadius(width, height, shape);
   const root = new Konva.Group({
     x: stage.width() / 2, y: stage.height() / 2,
     offsetX: width / 2, offsetY: height / 2, rotation,
-    clipFunc: (ctx) => roundRectPath(ctx, 0, 0, width, height, radius),
+    clipFunc: (ctx) => cardClipPath(ctx, width, height, shape),
   });
   layer.add(root);
 
@@ -44,7 +44,7 @@ function makeOffscreen(width, height, rotation = 0) {
 // Render full-size card -> HTMLCanvasElement (rotation from fieldValues.__rotation)
 export async function renderCardCanvas({ width, height, data, fieldValues = null, pixelRatio = 1 }) {
   const rotation = (fieldValues && fieldValues.__rotation) || 0;
-  const off = makeOffscreen(width, height, rotation);
+  const off = makeOffscreen(width, height, rotation, data?.shape);
   try {
     buildFromTemplate(off, data, { interactive: false });
     await Promise.all(off._pendingImages || []); // wait for static images (frames)

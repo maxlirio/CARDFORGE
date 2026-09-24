@@ -43,7 +43,7 @@ function buildContext(width, height, data) {
   if (ctx?.engine) ctx.engine.destroy();
 
   const host = document.getElementById("editor-stage");
-  const engine = new CanvasEngine(host, { width, height });
+  const engine = new CanvasEngine(host, { width, height, shape: data?.shape });
 
   const properties = new PropertiesPanel(document.getElementById("editor-properties"), engine, {
     onChange: () => history.push(),
@@ -118,37 +118,43 @@ function buildContext(width, height, data) {
 function syncSizePreset(width, height) {
   const sel = document.getElementById("size-preset");
   const ori = document.getElementById("orientation-preset");
-  const portraitKey = `${Math.min(width, height)}x${Math.max(width, height)}`;
-  const match = Array.from(sel.options).find((o) => o.value === portraitKey);
-  sel.value = match ? portraitKey : "custom";
+  const circle = ctx.engine.shape === "circle";
+  const key = circle ? `circle:${Math.min(width, height)}`
+    : `${Math.min(width, height)}x${Math.max(width, height)}`;
+  const match = Array.from(sel.options).find((o) => o.value === key);
+  sel.value = match ? key : "custom";
   ori.value = width > height ? "landscape" : "portrait";
+  ori.disabled = circle; // a circle has no orientation
 
-  const apply = (w, h) => {
+  const apply = (w, h, shape) => {
     const data = serializeTemplate(ctx.engine);
-    data.width = w; data.height = h;
+    data.width = w; data.height = h; data.shape = shape;
     app.editor.width = w; app.editor.height = h;
     buildContext(w, h, data);
     syncSizePreset(w, h);
   };
 
   sel.onchange = async () => {
-    let w, h;
+    let w, h, shape = "rect";
     if (sel.value === "custom") {
       const v = await promptText({ title: "Custom size (px, WxH @300dpi)", value: `${ctx.engine.width}x${ctx.engine.height}` });
       if (!v || !/^\d+x\d+$/.test(v)) { syncSizePreset(ctx.engine.width, ctx.engine.height); return; }
       [w, h] = v.split("x").map(Number);
+    } else if (sel.value.startsWith("circle:")) {
+      w = h = Number(sel.value.slice(7));
+      shape = "circle";
     } else {
       [w, h] = sel.value.split("x").map(Number);       // preset values are portrait
       if (ori.value === "landscape") [w, h] = [h, w];
     }
-    apply(w, h);
+    apply(w, h, shape);
   };
 
   ori.onchange = () => {
     let w = ctx.engine.width, h = ctx.engine.height;
     const wantLandscape = ori.value === "landscape";
     if (wantLandscape !== w > h) [w, h] = [h, w];
-    apply(w, h);
+    apply(w, h, ctx.engine.shape);
   };
 }
 

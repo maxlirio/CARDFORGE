@@ -30,7 +30,7 @@ export async function openBuilder(templateRow, cardRow) {
 
   if (bctx?.engine) bctx.engine.destroy();
   const host = document.getElementById("builder-stage");
-  const engine = new CanvasEngine(host, { width: data.width, height: data.height });
+  const engine = new CanvasEngine(host, { width: data.width, height: data.height, shape: data.shape });
   engine.emptyDrag = "pan"; // builder: drag empty space to pan, no marquee/select
 
   buildFromTemplate(engine, data, { interactive: false });

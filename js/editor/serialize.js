@@ -29,6 +29,7 @@ export function serializeTemplate(engine) {
   return {
     width: engine.width,
     height: engine.height,
+    shape: engine.shape || "rect",
     background: engine.background.fill(),
     nodes: engine.contentNodes().map((n) => {
       const o = n.toObject();

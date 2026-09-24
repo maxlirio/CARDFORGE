@@ -24,11 +24,28 @@ export function roundRectPath(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
+// The card's outline: rounded rect normally, a circle for round tokens.
+export function cardClipPath(ctx, w, h, shape) {
+  if (shape === "circle") {
+    ctx.beginPath();
+    ctx.arc(w / 2, h / 2, Math.min(w, h) / 2, 0, Math.PI * 2);
+    ctx.closePath();
+  } else {
+    roundRectPath(ctx, 0, 0, w, h, cardCornerRadius(w, h));
+  }
+}
+
+// background corner radius matching that outline (a square rect with r=w/2 IS a circle)
+export function cardBgRadius(w, h, shape) {
+  return shape === "circle" ? Math.min(w, h) / 2 : cardCornerRadius(w, h);
+}
+
 export class CanvasEngine {
-  constructor(hostEl, { width, height }) {
+  constructor(hostEl, { width, height, shape }) {
     this.host = hostEl;
     this.width = width;
     this.height = height;
+    this.shape = shape === "circle" ? "circle" : "rect";
     this.selection = [];        // currently selected nodes (supports multi-select)
     this.emptyDrag = "marquee"; // what an empty-area drag does: marquee | pan | none
     this._handlers = {};
@@ -50,16 +67,16 @@ export class CanvasEngine {
     // can be rotated (builder orientation) without touching individual nodes. At 0°
     // this is an identity transform — the editor is unaffected.
     this.rotation = 0;
-    this.cardRadius = cardCornerRadius(width, height);
-    // clip everything to the rounded card rect: real-card corners + anything drawn
-    // past the card edges is cut off.
+    this.cardRadius = cardBgRadius(width, height, this.shape);
+    // clip everything to the card outline (rounded rect, or circle for tokens):
+    // anything drawn past the card edge is cut off.
     this.root = new Konva.Group({
       x: width / 2, y: height / 2, offsetX: width / 2, offsetY: height / 2,
-      clipFunc: (ctx) => roundRectPath(ctx, 0, 0, this.width, this.height, this.cardRadius),
+      clipFunc: (ctx) => cardClipPath(ctx, this.width, this.height, this.shape),
     });
     this.layer.add(this.root);
 
-    // card background (white, rounded like a real card). role=background -> part of export.
+    // card background (white, shaped like the real card). role=background -> part of export.
     this.background = new Konva.Rect({
       x: 0, y: 0, width, height, fill: "#ffffff", cornerRadius: this.cardRadius,
       name: "card-bg", listening: true,
