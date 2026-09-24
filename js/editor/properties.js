@@ -3,6 +3,7 @@
 
 const Konva = window.Konva;
 import { createFontCombo, createBoldItalic } from "../ui/text-controls.js";
+import { applyFade } from "./canvas.js";
 
 export class PropertiesPanel {
   constructor(hostEl, engine, { onChange }) {
@@ -65,6 +66,13 @@ export class PropertiesPanel {
       g.appendChild(this._numberRow("Stroke width", node.strokeWidth() || 0, 0, 60, (v) => { node.strokeWidth(v); this._commit(); }));
       if (cls === "Rect")
         g.appendChild(this._numberRow("Corner radius", node.cornerRadius() || 0, 0, 200, (v) => { node.cornerRadius(v); this._commit(); }));
+      if ((cls === "Rect" || cls === "Ellipse") && !role) {
+        g.appendChild(this._selectRow("Fade", node.getAttr("fadeDir") || "none",
+          ["none", "left", "right", "up", "down", "edges"],
+          (v) => { node.setAttr("fadeDir", v); applyFade(node); this._commit(); }));
+        g.appendChild(this._rangeRow("Fade amount", node.getAttr("fadeAmt") ?? 0.5,
+          (v) => { node.setAttr("fadeAmt", v); applyFade(node); this._commit(); }));
+      }
     }
     g.appendChild(this._rangeRow("Opacity", node.opacity(), (v) => { node.opacity(v); this._commit(); }));
     h.appendChild(g);
@@ -81,7 +89,7 @@ export class PropertiesPanel {
       i.type = "number"; i.step = "any"; i.value = Math.round(get() * 10) / 10;
       i.addEventListener("change", () => {
         const v = parseFloat(i.value);
-        if (Number.isFinite(v)) { set(v); this.engine.transformer.forceUpdate(); this._commit(); }
+        if (Number.isFinite(v)) { set(v); applyFade(node); this.engine.transformer.forceUpdate(); this._commit(); }
       });
       r.appendChild(i);
       return r;
@@ -217,10 +225,10 @@ export class PropertiesPanel {
     const has = !!f && f !== "transparent";
     const chk = document.createElement("input"); chk.type = "checkbox"; chk.checked = has; chk.title = "Fill on/off";
     const color = document.createElement("input"); color.type = "color"; color.value = normHex(has ? f : "#cccccc"); color.disabled = !has;
-    color.addEventListener("input", () => { node.fill(color.value); this._commit(); });
+    color.addEventListener("input", () => { node.fill(color.value); applyFade(node); this._commit(); });
     chk.addEventListener("change", () => {
       if (chk.checked) {
-        node.fill(color.value); color.disabled = false;
+        node.fill(color.value); color.disabled = false; applyFade(node);
       } else {
         node.fill(null); color.disabled = true;
         // a hollow shape needs a visible border, or it would vanish

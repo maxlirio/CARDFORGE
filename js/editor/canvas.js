@@ -40,6 +40,53 @@ export function cardBgRadius(w, h, shape) {
   return shape === "circle" ? Math.min(w, h) / 2 : cardCornerRadius(w, h);
 }
 
+// Apply a shape's fade (fadeDir/fadeAmt attrs) as an alpha gradient on its fill.
+// Re-run after the fill color or the shape's size changes; a serialized template
+// carries the resulting gradient attrs, so builder/export need no extra work.
+export function applyFade(node) {
+  const dir = node.getAttr("fadeDir") || "none";
+  const color = node.fill();
+  if (dir === "none" || !color || typeof color !== "string" || !color.startsWith("#")) {
+    node.fillPriority("color");
+    return;
+  }
+  const amt = Math.min(1, Math.max(0.05, node.getAttr("fadeAmt") ?? 0.5));
+  const [r, g, b] = hexToRgbParts(color);
+  const solid = `rgba(${r},${g},${b},1)`, clear = `rgba(${r},${g},${b},0)`;
+  const stops = [0, solid, Math.max(0, 1 - amt), solid, 1, clear];
+
+  const isEll = node.className === "Ellipse";
+  const w = isEll ? node.radiusX() * 2 : node.width();
+  const h = isEll ? node.radiusY() * 2 : node.height();
+  const x0 = isEll ? -w / 2 : 0, y0 = isEll ? -h / 2 : 0; // ellipses are centre-origin
+
+  if (dir === "edges") {
+    const c = { x: x0 + w / 2, y: y0 + h / 2 };
+    node.fillRadialGradientStartPoint(c);
+    node.fillRadialGradientEndPoint(c);
+    node.fillRadialGradientStartRadius(0);
+    node.fillRadialGradientEndRadius(isEll ? Math.max(w, h) / 2 : Math.hypot(w, h) / 2);
+    node.fillRadialGradientColorStops(stops);
+    node.fillPriority("radial-gradient");
+  } else {
+    const [from, to] = {
+      right: [{ x: x0, y: y0 }, { x: x0 + w, y: y0 }],
+      left:  [{ x: x0 + w, y: y0 }, { x: x0, y: y0 }],
+      down:  [{ x: x0, y: y0 }, { x: x0, y: y0 + h }],
+      up:    [{ x: x0, y: y0 + h }, { x: x0, y: y0 }],
+    }[dir];
+    node.fillLinearGradientStartPoint(from);
+    node.fillLinearGradientEndPoint(to);
+    node.fillLinearGradientColorStops(stops);
+    node.fillPriority("linear-gradient");
+  }
+}
+
+function hexToRgbParts(hex) {
+  const h = hex.length === 4 ? "#" + hex.slice(1).split("").map((c) => c + c).join("") : hex;
+  return [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16) || 0);
+}
+
 export class CanvasEngine {
   constructor(hostEl, { width, height, shape }) {
     this.host = hostEl;

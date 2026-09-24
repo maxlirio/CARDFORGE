@@ -7,7 +7,7 @@ import { saveTemplate, uploadImage } from "../supabase.js";
 import { loadImage } from "./serialize.js";
 
 const Konva = window.Konva;
-import { CanvasEngine } from "./canvas.js";
+import { CanvasEngine, applyFade } from "./canvas.js";
 import { ToolManager } from "./tools.js";
 import { PropertiesPanel } from "./properties.js";
 import { History } from "./history.js";
@@ -229,6 +229,7 @@ function normalizeNode(node) {
       return;
   }
   node.scale({ x: 1, y: 1 });
+  applyFade(node); // gradient endpoints depend on the shape's size
 }
 
 /* -------------------- keyboard shortcuts -------------------- */
