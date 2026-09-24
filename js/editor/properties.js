@@ -66,7 +66,7 @@ export class PropertiesPanel {
       g.appendChild(this._numberRow("Stroke width", node.strokeWidth() || 0, 0, 60, (v) => { node.strokeWidth(v); this._commit(); }));
       if (cls === "Rect")
         g.appendChild(this._numberRow("Corner radius", node.cornerRadius() || 0, 0, 200, (v) => { node.cornerRadius(v); this._commit(); }));
-      if ((cls === "Rect" || cls === "Ellipse") && !role) {
+      if ((cls === "Rect" || cls === "Ellipse") && role !== "imageSlot") {
         g.appendChild(this._selectRow("Fade", node.getAttr("fadeDir") || "none",
           ["none", "left", "right", "up", "down", "edges"],
           (v) => { node.setAttr("fadeDir", v); applyFade(node); this._commit(); }));
