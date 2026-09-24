@@ -2,7 +2,7 @@
 // Same-origin: network-first (deploys stay fresh), cache fallback when offline.
 // CDN libs: cache-first (versioned URLs never change).
 
-const CACHE = "cardforge-shell-v1";
+const CACHE = "cardforge-shell-v2";
 
 const SHELL = [
   "./",
@@ -46,10 +46,12 @@ self.addEventListener("fetch", (e) => {
   const url = new URL(req.url);
 
   if (url.origin === location.origin) {
-    // network-first so a deploy is picked up immediately when online
+    // network-first so a deploy is picked up immediately when online.
+    // cache:"no-cache" bypasses the browser's 10-minute HTTP cache and
+    // revalidates by ETag instead — no more stale/mixed-version loads.
     e.respondWith((async () => {
       try {
-        const res = await fetch(req);
+        const res = await fetch(req, { cache: "no-cache" });
         if (res && res.ok) (await caches.open(CACHE)).put(req, res.clone());
         return res;
       } catch {
