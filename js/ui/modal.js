@@ -58,3 +58,39 @@ export async function promptText({ title, value = "", placeholder = "" }) {
   });
   return result === null ? null : result;
 }
+
+// Pick one value from a list. options: [{ value, label }] (value may be null).
+// Resolves to the chosen value, or null-ish sentinel undefined on cancel.
+export async function promptChoice({ title, message = "", options, value = null, confirmText = "OK" }) {
+  const wrap = document.createElement("div");
+  if (message) {
+    const p = document.createElement("div");
+    p.className = "muted";
+    p.style.margin = "0 0 10px";
+    p.textContent = message;
+    wrap.appendChild(p);
+  }
+  const row = document.createElement("div");
+  row.className = "prop-row full";
+  const sel = document.createElement("select");
+  options.forEach((o, i) => {
+    const opt = document.createElement("option");
+    opt.value = String(i);
+    opt.textContent = o.label;
+    if (o.value === value) opt.selected = true;
+    sel.appendChild(opt);
+  });
+  row.appendChild(sel);
+  wrap.appendChild(row);
+  const result = await modal({
+    title,
+    body: wrap,
+    confirmText,
+    onMount: (api) => {
+      api._collect = () => ({ value: options[Number(sel.value)].value });
+      setTimeout(() => sel.focus(), 10);
+      sel.addEventListener("keydown", (e) => { if (e.key === "Enter") api.close({ value: options[Number(sel.value)].value }); });
+    },
+  });
+  return result === null ? undefined : result.value;
+}

@@ -4,16 +4,23 @@ import {
   listGames, saveGame, deleteGame,
   listFolders, saveFolder, deleteFolder,
   listTemplates, listCards, deleteTemplate, deleteCard, getTemplate, saveCard, saveTemplate,
+  moveCards, deleteCards,
 } from "../supabase.js";
 import { app } from "../state.js";
 import { navigate } from "../router.js";
 import { openEditor } from "../editor/editor.js";
 import { openBuilder } from "../builder/builder.js";
-import { promptText } from "./modal.js";
+import { promptText, promptChoice } from "./modal.js";
 import { printJobDialog } from "../export/pdf.js";
 
 // cached so the game-header / folder print buttons can reach the current cards+folders
 let lastCards = [], lastFolders = [];
+
+// multi-select state for bulk card actions (move / delete many at once)
+let selectMode = false;
+const selection = new Set();
+let visibleCardIds = [];   // the filtered cards, in displayed order (for shift-range select)
+let lastAnchor = -1;       // index of the last clicked tile, for shift-click ranges
 
 // build print items (resolve each card's template, cached) from card rows
 async function buildPrintItems(cardRows) {
@@ -146,8 +153,13 @@ export async function renderGame() {
     : sel === "unfiled" ? "Cards · Unfiled"
     : "Cards · " + (folders.find((f) => f.id === sel)?.name || "Folder");
 
-  if (!filtered.length) cGrid.innerHTML = "<div class='empty-hint'>No cards here. Use a template to build one — then drag cards onto a folder to organize them.</div>";
-  for (const c of filtered) {
+  // keep the selection honest: forget cards that no longer exist
+  for (const id of [...selection]) if (!cards.some((c) => c.id === id)) selection.delete(id);
+  visibleCardIds = filtered.map((c) => c.id);
+  renderCardsTools(filtered);
+
+  if (!filtered.length) cGrid.innerHTML = "<div class='empty-hint'>No cards here. Use a template to build one — then drag cards onto a folder (or use “☑ Select” to move many at once).</div>";
+  filtered.forEach((c, i) => {
     const cardEl = libCard({
       title: c.name || "Untitled card", sub: "card", thumb: c.thumbnail_url,
       onOpen: () => openCard(c),
@@ -158,11 +170,139 @@ export async function renderGame() {
         ["Delete", async () => { if (confirm("Delete this card?")) { await deleteCard(c.id); renderGame(); } }, "danger"],
       ],
     });
+    cardEl.dataset.cardId = c.id;
     cardEl.draggable = true;
-    cardEl.addEventListener("dragstart", (e) => { e.dataTransfer.setData("text/card", c.id); cardEl.classList.add("dragging"); });
-    cardEl.addEventListener("dragend", () => cardEl.classList.remove("dragging"));
+    // dragging a tile that's part of the selection drags the WHOLE selection
+    cardEl.addEventListener("dragstart", (e) => {
+      const ids = selection.has(c.id) ? [...selection] : [c.id];
+      e.dataTransfer.setData("text/cards", JSON.stringify(ids));
+      e.dataTransfer.setData("text/card", ids[0]);
+      for (const id of ids) cGrid.querySelector(`[data-card-id="${id}"]`)?.classList.add("dragging");
+    });
+    cardEl.addEventListener("dragend", () => {
+      cGrid.querySelectorAll(".dragging").forEach((n) => n.classList.remove("dragging"));
+    });
+    if (selectMode) {
+      cardEl.classList.add("selectable");
+      cardEl.appendChild(el("span", "sel-box"));
+      // capture so the tile's own buttons can't fire while picking
+      cardEl.addEventListener("click", (e) => {
+        e.preventDefault(); e.stopPropagation();
+        toggleAt(i, e.shiftKey);
+      }, true);
+    }
     cGrid.appendChild(cardEl);
+  });
+  refreshSelectionUI();
+}
+
+/* -------------------- multi-select / bulk moves -------------------- */
+
+function renderCardsTools(filtered) {
+  const host = document.getElementById("cards-tools");
+  if (!host) return;
+  host.innerHTML = "";
+  if (!selectMode) {
+    if (filtered.length) {
+      host.appendChild(actionBtn("☑ Select", () => {
+        selectMode = true; selection.clear(); lastAnchor = -1; renderGame();
+      }));
+    }
+    return;
   }
+  const count = el("span", "sel-count");
+  count.id = "sel-count";
+  host.appendChild(count);
+  host.appendChild(actionBtn(`All (${filtered.length})`, () => {
+    visibleCardIds.forEach((id) => selection.add(id)); refreshSelectionUI();
+  }));
+  host.appendChild(actionBtn("None", () => { selection.clear(); lastAnchor = -1; refreshSelectionUI(); }));
+  host.appendChild(actionBtn("Move to folder…", () => moveSelection(), "primary"));
+  host.appendChild(actionBtn("Delete", () => deleteSelection(), "danger"));
+  host.appendChild(actionBtn("Done", () => { selectMode = false; selection.clear(); renderGame(); }));
+}
+
+function refreshSelectionUI() {
+  const grid = document.getElementById("g-cards-grid");
+  grid?.querySelectorAll(".lib-card[data-card-id]").forEach((n) => {
+    n.classList.toggle("selected", selection.has(n.dataset.cardId));
+  });
+  const lbl = document.getElementById("sel-count");
+  if (lbl) lbl.textContent = `${selection.size} selected`;
+}
+
+// click = toggle one; shift-click = add everything between here and the last click
+function toggleAt(i, shift) {
+  const ids = visibleCardIds;
+  if (shift && lastAnchor >= 0 && lastAnchor < ids.length) {
+    const [a, b] = lastAnchor < i ? [lastAnchor, i] : [i, lastAnchor];
+    for (let k = a; k <= b; k++) selection.add(ids[k]);
+  } else {
+    if (selection.has(ids[i])) selection.delete(ids[i]); else selection.add(ids[i]);
+    lastAnchor = i;
+  }
+  refreshSelectionUI();
+}
+
+const NEW_FOLDER = Symbol("new-folder");
+
+// Destination picker shared by the bulk-move actions. Returns a folder id,
+// null for Unfiled, or undefined if cancelled.
+async function chooseFolder({ title, message = "", excludeId = undefined }) {
+  const options = [];
+  if (excludeId !== "unfiled") options.push({ value: null, label: "Unfiled (no folder)" });
+  for (const f of lastFolders) {
+    if (f.id === excludeId) continue;
+    options.push({ value: f.id, label: f.name || "Folder" });
+  }
+  options.push({ value: NEW_FOLDER, label: "＋ New folder…" });
+  const picked = await promptChoice({
+    title, message, options, value: options[0].value, confirmText: "Move",
+  });
+  if (picked === undefined) return undefined;
+  if (picked !== NEW_FOLDER) return picked;
+  const name = await promptText({ title: "New folder name", value: "New folder" });
+  if (!name) return undefined;
+  const f = await saveFolder({ game_id: app.currentGameId, name });
+  lastFolders = [...lastFolders, f];
+  return f.id;
+}
+
+async function moveSelection() {
+  const ids = [...selection];
+  if (!ids.length) { alert("Pick some cards first (click their tiles)."); return; }
+  const dest = await chooseFolder({
+    title: `Move ${ids.length} card${ids.length === 1 ? "" : "s"} to…`,
+    message: "One write — no dragging.",
+  });
+  if (dest === undefined) return;
+  await moveCards(ids, dest);
+  selection.clear(); lastAnchor = -1;
+  renderGame();
+}
+
+async function deleteSelection() {
+  const ids = [...selection];
+  if (!ids.length) { alert("Pick some cards first (click their tiles)."); return; }
+  if (!confirm(`Delete ${ids.length} card${ids.length === 1 ? "" : "s"}? This can't be undone.`)) return;
+  await deleteCards(ids);
+  selection.clear(); lastAnchor = -1;
+  renderGame();
+}
+
+// Escape leaves select mode; ⌘/Ctrl-A takes everything currently listed.
+if (typeof document !== "undefined") {
+  document.addEventListener("keydown", (e) => {
+    if (!selectMode) return;
+    if (document.getElementById("view-game")?.classList.contains("hidden")) return;
+    if (e.key === "Escape") {
+      selectMode = false; selection.clear(); renderGame();
+    } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "a") {
+      e.preventDefault();
+      visibleCardIds.forEach((id) => selection.add(id));
+      refreshSelectionUI();
+    }
+  });
 }
 
 // duplicate a template under a new name (cards keep pointing at the original)
@@ -229,6 +369,27 @@ function folderItem(name, id, count, deletable) {
     startPrintJob(cardsForFolder(id), (id == null ? "All cards" : id === "unfiled" ? "Unfiled" : "Folder: " + name), name);
   });
   li.appendChild(pr);
+  // move every card in this folder somewhere else, in one go
+  if (count > 0) {
+    const mv = document.createElement("button");
+    mv.className = "folder-move"; mv.textContent = "➜";
+    mv.title = "Move all cards in here to another folder";
+    mv.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const rows = cardsForFolder(id);
+      if (!rows.length) return;
+      const dest = await chooseFolder({
+        title: `Move all ${rows.length} card${rows.length === 1 ? "" : "s"} from “${name}”`,
+        message: "Every card listed under this folder moves to the one you pick.",
+        excludeId: id === null ? undefined : id,
+      });
+      if (dest === undefined) return;
+      await moveCards(rows.map((c) => c.id), dest);
+      selection.clear(); lastAnchor = -1;
+      renderGame();
+    });
+    li.appendChild(mv);
+  }
   if (deletable) {
     const del = document.createElement("button");
     del.className = "folder-del"; del.textContent = "✕"; del.title = "Delete folder";
@@ -249,9 +410,16 @@ function folderItem(name, id, count, deletable) {
     li.addEventListener("dragleave", () => li.classList.remove("drop-hover"));
     li.addEventListener("drop", async (e) => {
       e.preventDefault(); li.classList.remove("drop-hover");
-      const cardId = e.dataTransfer.getData("text/card");
-      if (!cardId) return;
-      await saveCard({ id: cardId, folder_id: id === "unfiled" ? null : id });
+      let ids = [];
+      const multi = e.dataTransfer.getData("text/cards");
+      if (multi) { try { ids = JSON.parse(multi) || []; } catch {} }
+      if (!ids.length) {
+        const one = e.dataTransfer.getData("text/card");
+        if (one) ids = [one];
+      }
+      if (!ids.length) return;
+      await moveCards(ids, id === "unfiled" ? null : id);
+      selection.clear(); lastAnchor = -1;
       renderGame();
     });
   }
@@ -281,7 +449,7 @@ function libCard({ title, sub, thumb, onOpen, actions }) {
 
 function actionBtn(label, fn, variant) {
   const b = document.createElement("button");
-  b.className = "btn" + (variant === "danger" ? " btn-danger" : " btn-ghost");
+  b.className = "btn" + (variant === "danger" ? " btn-danger" : variant === "primary" ? " btn-primary" : " btn-ghost");
   b.textContent = label;
   b.addEventListener("click", (e) => { e.stopPropagation(); fn(); });
   return b;

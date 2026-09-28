@@ -329,6 +329,54 @@ export async function deleteCard(id) {
   return deleteRow("cards", "cf_cards", id);
 }
 
+// Bulk: move many cards into a folder (null = Unfiled) in ONE write instead of
+// one save per card. Used by the multi-select / "move all" folder actions.
+export async function moveCards(ids, folderId) {
+  if (!ids?.length) return;
+  const now = new Date().toISOString();
+  const set = new Set(ids);
+  if (CLOUD) {
+    let queued = false;
+    try {
+      const { error } = await sb.from("cards")
+        .update({ folder_id: folderId, updated_at: now }).in("id", ids);
+      if (error) throw error;
+    } catch (e) {
+      if (!isOffline(e)) throw e;
+      queued = true;
+    }
+    const rows = await mirrorList("cards");
+    for (const r of rows) {
+      if (!set.has(r.id)) continue;
+      r.folder_id = folderId; r.updated_at = now;
+      if (queued) { r._pending = true; const { _pending, ...out } = r; await outboxPush({ op: "save", table: "cards", row: out }); }
+    }
+    await mirrorPut("cards", rows);
+    return;
+  }
+  const all = await idbList("cf_cards");
+  all.forEach((r) => { if (set.has(r.id)) { r.folder_id = folderId; r.updated_at = now; } });
+  await idbSet("cf_cards", all);
+}
+
+// Bulk: delete many cards in ONE write.
+export async function deleteCards(ids) {
+  if (!ids?.length) return;
+  const set = new Set(ids);
+  if (CLOUD) {
+    try {
+      const { error } = await sb.from("cards").delete().in("id", ids);
+      if (error) throw error;
+    } catch (e) {
+      if (!isOffline(e)) throw e;
+      for (const id of ids) await outboxPush({ op: "delete", table: "cards", id });
+    }
+    await mirrorRemove("cards", (r) => set.has(r.id));
+    return;
+  }
+  await idbSet("cf_cards", (await idbList("cf_cards")).filter((r) => !set.has(r.id)));
+}
+
 /* ============================================================
  * DEMO → CLOUD MIGRATION
  * When cloud sync is first enabled, work from local demo mode is
