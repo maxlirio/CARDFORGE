@@ -3,6 +3,7 @@
 import {
   CLOUD, getSession, signOut, saveGame, saveFolder, saveTemplate, ensureLocalMigration,
   pendingCount, flushOutbox, localDemoDataSummary, migrateLocalToCloud,
+  exportEverything, importEverything, requestPersistentStorage, lastBackupAt, markBackupTaken,
 } from "./supabase.js";
 import { modal } from "./ui/modal.js";
 import { app, on } from "./state.js";
@@ -29,6 +30,32 @@ function showDemoBanner() {
     document.getElementById("demo-banner").classList.remove("hidden");
     document.body.classList.add("has-banner");
   }
+}
+
+// Local mode lives entirely in this browser's storage — which the browser can
+// clear without warning. Mark it persistent, and nag if the backup is stale.
+async function guardLocalData() {
+  if (CLOUD) return;
+  await requestPersistentStorage();
+  const el = document.getElementById("backup-nag");
+  if (!el) return;
+  const last = await lastBackupAt();
+  const stale = !last || (Date.now() - Date.parse(last)) > 7 * 864e5;
+  const { games } = await exportEverything();
+  if (!games.length || !stale) { el.classList.add("hidden"); return; }
+  el.textContent = last
+    ? `Last backup ${new Date(last).toLocaleDateString()} — this browser is the only copy. Back up.`
+    : "No backup yet — this browser is the only copy of your games. Hit ⤓ Backup.";
+  el.classList.remove("hidden");
+}
+
+function downloadJSON(obj, filename) {
+  const blob = new Blob([JSON.stringify(obj)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 /* ---- offline mode: app shell cache + sync status pill ---- */
@@ -91,6 +118,40 @@ async function boot() {
     await signOut();
     app.user = null;
     navigate("auth");
+  });
+
+  // Backup everything to one file
+  document.getElementById("backup-btn").addEventListener("click", async () => {
+    try {
+      const data = await exportEverything();
+      const stamp = new Date().toISOString().slice(0, 10);
+      downloadJSON({ format: "cardforge.backup.v1", exported_at: new Date().toISOString(), ...data },
+                   `cardforge-backup-${stamp}.json`);
+      await markBackupTaken();
+      document.getElementById("backup-nag")?.classList.add("hidden");
+    } catch (e) {
+      alert("Backup failed: " + (e.message || e));
+    }
+  });
+
+  // Restore from a backup file (adds to what's here — never overwrites)
+  document.getElementById("restore-btn").addEventListener("click", async () => {
+    const file = await pickFile(".json,application/json");
+    if (!file) return;
+    try {
+      const obj = JSON.parse(await file.text());
+      if (!Array.isArray(obj.games) && !Array.isArray(obj.cards)) {
+        throw new Error("That isn't a CARD FORGE backup file.");
+      }
+      const n = (obj.games || []).length, c = (obj.cards || []).length;
+      if (!confirm(`Restore ${n} game${n === 1 ? "" : "s"} and ${c} card${c === 1 ? "" : "s"}?\n` +
+                   `They are added alongside what's already here — nothing is overwritten.`)) return;
+      const res = await importEverything(obj);
+      alert(`Restored ${res.games} games, ${res.templates} templates, ${res.cards} cards.`);
+      renderGames();
+    } catch (e) {
+      alert("Restore failed: " + (e.message || e));
+    }
   });
 
   // New Game
@@ -157,6 +218,7 @@ async function enterApp() {
   await ensureLocalMigration(); // fold pre-games local data into a default game
   renderGames();
   navigate("games");
+  guardLocalData();       // persist storage + backup nag (local mode)
   maybeOfferCloudImport(); // cloud mode: import leftover demo-mode work
 }
 

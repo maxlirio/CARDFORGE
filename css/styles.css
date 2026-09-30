@@ -146,6 +146,11 @@ body.has-banner .view { height: calc(100vh - 34px); }
 .folder-item:hover .folder-print { opacity: 0.85; }
 .folder-print:hover { opacity: 1; }
 .game-main { flex: 1; overflow-y: auto; padding: 24px 28px; }
+.backup-nag {
+  margin-bottom: 18px; padding: 10px 14px; border-radius: var(--radius);
+  background: rgba(224, 85, 107, 0.12); border: 1px solid var(--danger);
+  color: #ffc9d2; font-size: 13px;
+}
 
 /* cards section header + multi-select */
 .section-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }

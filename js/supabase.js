@@ -378,6 +378,74 @@ export async function deleteCards(ids) {
 }
 
 /* ============================================================
+ * BACKUP / RESTORE
+ * Demo mode keeps everything in this browser's IndexedDB, which the
+ * browser is free to clear. These two make a portable copy.
+ * ========================================================== */
+
+export async function exportEverything() {
+  if (CLOUD) {
+    const [games, folders, templates, cards] = await Promise.all([
+      cloudList("games", null, { col: "updated_at", asc: false }),
+      cloudList("folders", null, { col: "created_at", asc: true }),
+      cloudList("templates", null, { col: "updated_at", asc: false }),
+      cloudList("cards", null, { col: "updated_at", asc: false }),
+    ]);
+    return { games, folders, templates, cards };
+  }
+  return {
+    games: await idbList("cf_games"),
+    folders: await idbList("cf_folders"),
+    templates: await idbList("cf_templates"),
+    cards: await idbList("cf_cards"),
+  };
+}
+
+// Restore alongside whatever is already here: every id is re-minted, so a
+// restore adds games back and can never overwrite existing work.
+export async function importEverything(raw) {
+  const uid = await currentUserId();
+  const rows = remapDemoRows(raw, uid);
+  if (CLOUD) {
+    for (const [table, list] of [
+      ["games", rows.games], ["folders", rows.folders],
+      ["templates", rows.templates], ["cards", rows.cards],
+    ]) {
+      for (let i = 0; i < list.length; i += 50) {
+        const { error } = await sb.from(table).insert(list.slice(i, i + 50));
+        if (error) throw error;
+      }
+      await mirrorMerge(table, list);
+    }
+  } else {
+    for (const [key, list] of [
+      ["cf_games", rows.games], ["cf_folders", rows.folders],
+      ["cf_templates", rows.templates], ["cf_cards", rows.cards],
+    ]) {
+      await idbSet(key, [...list, ...(await idbList(key))]);
+    }
+  }
+  return {
+    games: rows.games.length, folders: rows.folders.length,
+    templates: rows.templates.length, cards: rows.cards.length,
+  };
+}
+
+// Ask the browser to mark this origin's storage persistent, so routine
+// "clear site data" sweeps and quota eviction can't silently bin the library.
+export async function requestPersistentStorage() {
+  try {
+    if (!navigator.storage?.persist) return null;
+    if (await navigator.storage.persisted()) return true;
+    return await navigator.storage.persist();
+  } catch { return null; }
+}
+
+// When the last backup was taken (used for the nag in the banner).
+export async function lastBackupAt() { return (await idbGet("cf_last_backup")) || null; }
+export async function markBackupTaken() { await idbSet("cf_last_backup", new Date().toISOString()); }
+
+/* ============================================================
  * DEMO → CLOUD MIGRATION
  * When cloud sync is first enabled, work from local demo mode is
  * still in IndexedDB under cf_* keys. These helpers import it into

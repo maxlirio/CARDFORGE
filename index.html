@@ -41,11 +41,14 @@
     <header class="topbar">
       <h1 class="brand small">CARD <span>FORGE</span></h1>
       <div class="spacer"></div>
+      <button id="backup-btn" class="btn btn-ghost" title="Download every game, template and card as one backup file">⤓ Backup</button>
+      <button id="restore-btn" class="btn btn-ghost" title="Restore games from a backup file">Restore</button>
       <button id="new-game-btn" class="btn btn-primary">+ New Game</button>
       <span id="user-email" class="user-email"></span>
       <button id="logout-btn" class="btn btn-ghost">Log out</button>
     </header>
     <div class="library-body">
+      <div id="backup-nag" class="backup-nag hidden"></div>
       <div class="library-section">
         <h2>Your Games</h2>
         <div id="games-grid" class="card-grid"></div>
